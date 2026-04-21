@@ -180,36 +180,15 @@ def _activity_submenu(controller: Controller) -> pystray.Menu:
     return pystray.Menu(*items)
 
 
-def _queue_submenu(controller: Controller) -> pystray.Menu:
-    queue = controller.queue
-    if not queue:
-        return pystray.Menu(pystray.MenuItem("No jobs waiting", None, enabled=False))
-
-    # Factory for click handlers — pystray's _assert_action dislikes closures
-    # with kwarg defaults, so we build a proper 2-arg function for each item.
-    def _make_handler(job_id: int):
-        def _action(icon, item):
-            controller.request_claim(job_id)
-            controller.log_event(f"Requested claim on job #{job_id}")
-        return _action
-
-    items: list[pystray.MenuItem] = []
-    for q in queue[:20]:
-        label_name = q.document_filename or f"job #{q.job_id}"
-        label = (
-            f"{label_name} · {q.source_lang}→{q.target_lang} "
-            f"· {q.chunk_count} chunks"
-        )
-        items.append(pystray.MenuItem(label, _make_handler(q.job_id)))
-    return pystray.Menu(*items)
-
-
 def _build_menu(
     controller: Controller,
     llama: LlamaManager,
     admin_url: str,
     log_path: Path,
 ) -> pystray.Menu:
+    """Tray is a status viewer only — triggering translations happens on
+    the website per-document. The worker simply drains jobs as users
+    queue them."""
     state = controller.state
     llama_ok = llama.is_running()
 
@@ -237,10 +216,6 @@ def _build_menu(
             controller.pause()
         _refresh(icon, controller, llama)
 
-    def toggle_auto(icon, _item):
-        controller.set_auto_claim(not controller.auto_claim)
-        _refresh(icon, controller, llama)
-
     def quit_app(icon, _item):
         controller.stop()
         icon.stop()
@@ -248,19 +223,9 @@ def _build_menu(
     pause_label = "Resume polling" if controller.paused else "Pause polling"
     llama_label = "llama-server: restart" if llama_ok else "llama-server: start"
     llama_action = restart_llama if llama_ok else start_llama
-    auto_label = (
-        f"Auto-claim: {'ON' if controller.auto_claim else 'OFF'}  "
-        f"(click to {'disable' if controller.auto_claim else 'enable'})"
-    )
-
-    queue_count = len(controller.queue)
-    queue_label = f"Queue ({queue_count}) — click a job to run"
 
     return pystray.Menu(
         pystray.MenuItem(_title(state, llama_ok), None, enabled=False),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem(queue_label, _queue_submenu(controller)),
-        pystray.MenuItem(auto_label, toggle_auto),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(llama_label, llama_action),
         pystray.MenuItem(pause_label, toggle_pause),

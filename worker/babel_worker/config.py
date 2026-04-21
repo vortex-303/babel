@@ -31,10 +31,10 @@ class Config:
     poll_interval_seconds: float = 5.0
     heartbeat_interval_seconds: float = 30.0
     worker_id: str = ""
-    # When True the worker drains the queue automatically (old behavior).
-    # When False (default) the worker only translates jobs the operator
-    # explicitly picks from the tray — nothing runs without a click.
-    auto_claim: bool = False
+    # Worker drains the queue automatically. The "explicit trigger" step
+    # lives on the website (per-document Translate button), so anything
+    # already QUEUED was opted into by the uploader.
+    auto_claim: bool = True
 
     @classmethod
     def from_env(cls, config_path: Path | None = None) -> "Config":
@@ -81,6 +81,6 @@ class Config:
                 "BABEL_WORKER_ID", f"worker-{uuid.getnode():012x}"
             ),
             auto_claim=os.environ.get(
-                "BABEL_WORKER_AUTO_CLAIM", "false"
+                "BABEL_WORKER_AUTO_CLAIM", "true"
             ).lower() in ("1", "true", "yes", "y"),
         )
