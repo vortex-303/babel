@@ -157,7 +157,7 @@ def run(cfg: Config, controller: Controller | None = None) -> None:
             format="%(asctime)s %(levelname)s %(name)s %(message)s",
         )
     if controller is None:
-        controller = Controller()
+        controller = Controller(auto_claim=cfg.auto_claim)
     _install_signals(controller)
     # Wrap the real loop in a try/except so unhandled errors surface in the
     # tray as an "error" phase instead of a silent thread death.
@@ -211,9 +211,23 @@ def _run_inner(cfg: Config, controller: Controller) -> None:
                 last_heartbeat = time.time()
 
             try:
-                job = backend.claim_next()
+                if controller.auto_claim:
+                    job = backend.claim_next()
+                else:
+                    # Manual mode: refresh queue display, then see if the
+                    # operator has clicked a specific job to claim.
+                    try:
+                        controller.set_queue(backend.list_queue())
+                    except httpx.HTTPError as e:
+                        log.warning("list-queue failed: %s", e)
+                    requested = controller.take_pending_claim()
+                    job = backend.claim(requested) if requested else None
+                    if requested and job is None:
+                        controller.log_event(
+                            f"Could not claim job #{requested} — already gone?"
+                        )
             except httpx.HTTPError as e:
-                log.warning("claim-next failed: %s — retrying", e)
+                log.warning("claim failed: %s — retrying", e)
                 controller.update(phase="error", last_error=str(e))
                 time.sleep(cfg.poll_interval_seconds)
                 continue

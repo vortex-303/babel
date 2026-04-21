@@ -180,6 +180,26 @@ def _activity_submenu(controller: Controller) -> pystray.Menu:
     return pystray.Menu(*items)
 
 
+def _queue_submenu(controller: Controller) -> pystray.Menu:
+    queue = controller.queue
+    if not queue:
+        return pystray.Menu(pystray.MenuItem("No jobs waiting", None, enabled=False))
+
+    items: list[pystray.MenuItem] = []
+    for q in queue[:20]:
+        label_name = q.document_filename or f"job #{q.job_id}"
+        label = (
+            f"{label_name} · {q.source_lang}→{q.target_lang} "
+            f"· {q.chunk_count} chunks"
+        )
+        # Each clickable item captures its own job_id.
+        def _request(_icon, _item, jid=q.job_id):
+            controller.request_claim(jid)
+            controller.log_event(f"Requested claim on job #{jid}")
+        items.append(pystray.MenuItem(label, _request))
+    return pystray.Menu(*items)
+
+
 def _build_menu(
     controller: Controller,
     llama: LlamaManager,
@@ -213,6 +233,10 @@ def _build_menu(
             controller.pause()
         _refresh(icon, controller, llama)
 
+    def toggle_auto(icon, _item):
+        controller.set_auto_claim(not controller.auto_claim)
+        _refresh(icon, controller, llama)
+
     def quit_app(icon, _item):
         controller.stop()
         icon.stop()
@@ -220,9 +244,19 @@ def _build_menu(
     pause_label = "Resume polling" if controller.paused else "Pause polling"
     llama_label = "llama-server: restart" if llama_ok else "llama-server: start"
     llama_action = restart_llama if llama_ok else start_llama
+    auto_label = (
+        f"Auto-claim: {'ON' if controller.auto_claim else 'OFF'}  "
+        f"(click to {'disable' if controller.auto_claim else 'enable'})"
+    )
+
+    queue_count = len(controller.queue)
+    queue_label = f"Queue ({queue_count}) — click a job to run"
 
     return pystray.Menu(
         pystray.MenuItem(_title(state, llama_ok), None, enabled=False),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem(queue_label, _queue_submenu(controller)),
+        pystray.MenuItem(auto_label, toggle_auto),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(llama_label, llama_action),
         pystray.MenuItem(pause_label, toggle_pause),
@@ -268,7 +302,7 @@ def run(
     admin_url: str = ADMIN_URL_DEFAULT,
     log_path: Path = LOG_PATH_DEFAULT,
 ) -> None:
-    controller = Controller()
+    controller = Controller(auto_claim=cfg.auto_claim)
     llama = LlamaManager()
 
     icon = pystray.Icon(

@@ -260,3 +260,68 @@ def test_heartbeat_accepts_minimal_body(client):
     )
     assert r.status_code == 200
     assert r.json()["ok"] is True
+
+
+# ---------- list queue / targeted claim ----------
+
+
+def test_queue_lists_queued_jobs(client):
+    job_id = _seed_queued_job(client._engine)
+    r = client.get(
+        "/worker/queue", headers={"Authorization": "Bearer test-token"}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    assert body[0]["job_id"] == job_id
+    assert body[0]["source_lang"] == "en"
+    assert body[0]["chunk_count"] == 2
+
+
+def test_queue_is_empty_when_nothing_queued(client):
+    r = client.get(
+        "/worker/queue", headers={"Authorization": "Bearer test-token"}
+    )
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_claim_specific_transitions_that_job(client):
+    job_id = _seed_queued_job(client._engine)
+
+    r = client.post(
+        f"/worker/claim/{job_id}",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert r.status_code == 200
+    assert r.json()["job_id"] == job_id
+
+    with Session(client._engine) as s:
+        job = s.get(Job, job_id)
+        assert job.status == JobStatus.TRANSLATING
+
+
+def test_claim_specific_409_on_already_claimed(client):
+    job_id = _seed_queued_job(client._engine)
+    # Take it first
+    client.post(
+        f"/worker/claim/{job_id}",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    # Second claim should fail cleanly
+    r = client.post(
+        f"/worker/claim/{job_id}",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert r.status_code == 409
+
+
+def test_claim_specific_auth_required(client):
+    job_id = _seed_queued_job(client._engine)
+    r = client.post(f"/worker/claim/{job_id}")
+    assert r.status_code == 401
+    r = client.post(
+        f"/worker/claim/{job_id}",
+        headers={"Authorization": "Bearer wrong"},
+    )
+    assert r.status_code == 403

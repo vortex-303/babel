@@ -27,7 +27,7 @@ class Controller:
     the tray reads .state for display and calls .pause()/.resume()/.stop()
     to request action. The loop checks those flags at chunk boundaries."""
 
-    def __init__(self) -> None:
+    def __init__(self, auto_claim: bool = False) -> None:
         self._lock = threading.RLock()
         self._state = WorkerState()
         self._pause = threading.Event()
@@ -37,6 +37,14 @@ class Controller:
         # Bounded activity log shown in the tray menu. Tuples of
         # (timestamp_utc, short_message).
         self._events: deque[tuple[datetime, str]] = deque(maxlen=20)
+        # Pull-mode: keep latest queue snapshot so the tray can render it
+        # without hitting the network itself.
+        self._queue: list = []
+        # When the user clicks a queued job in the tray, the loop picks
+        # this up on its next iteration.
+        self._pending_claim: int | None = None
+        # Auto-claim toggle — can be flipped at runtime from the tray.
+        self._auto_claim = auto_claim
 
     @property
     def state(self) -> WorkerState:
@@ -57,6 +65,42 @@ class Controller:
     def events(self) -> list[tuple[datetime, str]]:
         with self._lock:
             return list(self._events)
+
+    # --- queue snapshot (manual mode) -----------------------------------
+
+    def set_queue(self, queue: list) -> None:
+        with self._lock:
+            self._queue = list(queue)
+        self.changed.set()
+
+    @property
+    def queue(self) -> list:
+        with self._lock:
+            return list(self._queue)
+
+    def request_claim(self, job_id: int) -> None:
+        """Tray calls this when the operator clicks a queued job. Loop
+        picks it up on the next iteration and calls /worker/claim/{id}."""
+        with self._lock:
+            self._pending_claim = job_id
+        self.changed.set()
+
+    def take_pending_claim(self) -> int | None:
+        with self._lock:
+            claim, self._pending_claim = self._pending_claim, None
+            return claim
+
+    # --- auto/manual toggle ---------------------------------------------
+
+    @property
+    def auto_claim(self) -> bool:
+        with self._lock:
+            return self._auto_claim
+
+    def set_auto_claim(self, enabled: bool) -> None:
+        with self._lock:
+            self._auto_claim = enabled
+        self.log_event(f"auto-claim: {'on' if enabled else 'off'}")
 
     # --- pause / resume --------------------------------------------------
 

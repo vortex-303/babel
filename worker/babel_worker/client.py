@@ -11,6 +11,22 @@ log = logging.getLogger("babel_worker.client")
 
 
 @dataclass
+class QueueItem:
+    """Summary of a queued job — what the tray UI shows for the operator
+    to pick from. Doesn't include chunk text (too large for the menu)."""
+    job_id: int
+    document_filename: str | None
+    document_word_count: int | None
+    source_lang: str
+    target_lang: str
+    model_adapter: str
+    chunk_count: int
+    priority: int
+    queued_at: str | None
+    submitted_by_admin: bool
+
+
+@dataclass
 class ChunkToTranslate:
     id: int
     idx: int
@@ -50,6 +66,37 @@ class BackendClient:
     def claim_next(self) -> ClaimedJob | None:
         r = self._client.post(f"{self._base}/worker/claim-next")
         r.raise_for_status()
+        return self._parse_claim(r)
+
+    def claim(self, job_id: int) -> ClaimedJob | None:
+        """Claim a specific job by id. Returns None if it's been snatched by
+        someone else or is no longer QUEUED."""
+        r = self._client.post(f"{self._base}/worker/claim/{job_id}")
+        if r.status_code == 409:
+            return None
+        r.raise_for_status()
+        return self._parse_claim(r)
+
+    def list_queue(self) -> list[QueueItem]:
+        r = self._client.get(f"{self._base}/worker/queue")
+        r.raise_for_status()
+        return [
+            QueueItem(
+                job_id=q["job_id"],
+                document_filename=q.get("document_filename"),
+                document_word_count=q.get("document_word_count"),
+                source_lang=q["source_lang"],
+                target_lang=q["target_lang"],
+                model_adapter=q["model_adapter"],
+                chunk_count=q["chunk_count"],
+                priority=q["priority"],
+                queued_at=q.get("queued_at"),
+                submitted_by_admin=q.get("submitted_by_admin", False),
+            )
+            for q in r.json()
+        ]
+
+    def _parse_claim(self, r: httpx.Response) -> ClaimedJob | None:
         if r.status_code == 204 or not r.content or r.content == b"null":
             return None
         data = r.json()
