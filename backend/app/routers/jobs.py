@@ -61,8 +61,14 @@ def create_job(body: CreateJobBody, session: Session = Depends(get_session)) -> 
 
 
 @router.get("")
-def list_jobs(session: Session = Depends(get_session)) -> list[dict]:
-    rows = session.exec(select(Job, Document).join(Document).order_by(Job.created_at.desc())).all()
+def list_jobs(
+    document_id: int | None = Query(default=None),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    stmt = select(Job, Document).join(Document).order_by(Job.created_at.desc())
+    if document_id is not None:
+        stmt = stmt.where(Job.document_id == document_id)
+    rows = session.exec(stmt).all()
     return [_serialize_job(job, doc) for job, doc in rows]
 
 

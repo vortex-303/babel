@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { AnalyzePanel } from "./_analyze-panel";
+import { DocumentVersions } from "./_versions-view";
 
 type Document = {
   id: number;
@@ -60,7 +60,7 @@ export default async function DocumentPage({
         </div>
       </header>
 
-      <main className="flex-1 max-w-5xl w-full mx-auto px-6 py-10">
+      <main className="flex-1 max-w-5xl w-full mx-auto px-6 py-10 space-y-6">
         <section className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <Stat label="Words" value={doc.word_count.toLocaleString()} />
           <Stat label="Tokens" value={doc.token_count.toLocaleString()} />
@@ -68,10 +68,12 @@ export default async function DocumentPage({
           <Stat label="Size" value={formatBytes(doc.size_bytes)} />
         </section>
 
-        <AnalyzePanel
-          documentId={doc.id}
-          detectedLang={doc.detected_lang}
-          detectedLangConfidence={doc.detected_lang_confidence}
+        <DocumentVersions
+          doc={{
+            id: doc.id,
+            filename: doc.filename,
+            detected_lang: doc.detected_lang,
+          }}
         />
       </main>
     </div>
