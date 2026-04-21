@@ -1,0 +1,30 @@
+import { HealthBadge } from "./_components/health-badge";
+import { RecentDocuments } from "./_components/recent-documents";
+import { UploadCard } from "./_components/upload-card";
+
+export default function Home() {
+  return (
+    <div className="flex flex-col flex-1 bg-zinc-50 dark:bg-black">
+      <header className="border-b border-zinc-200 dark:border-zinc-800">
+        <div className="max-w-5xl mx-auto px-6 py-5 flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight">babel</h1>
+            <p className="text-xs text-zinc-500">
+              Long-document translation, local-first
+            </p>
+          </div>
+          <HealthBadge />
+        </div>
+      </header>
+
+      <main className="flex-1 max-w-5xl w-full mx-auto px-6 py-12">
+        <UploadCard />
+        <RecentDocuments />
+      </main>
+
+      <footer className="border-t border-zinc-200 dark:border-zinc-800 py-4 text-center text-xs text-zinc-500">
+        babel · Vortex303
+      </footer>
+    </div>
+  );
+}

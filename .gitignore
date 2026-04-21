@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+.next/
+out/
+*.log
+.pnpm-store/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Data
+uploads/*
+!uploads/.gitkeep
+outputs/*
+!outputs/.gitkeep
+jobs/*
+!jobs/.gitkeep
+model_cache/*
+!model_cache/.gitkeep
+# backend creates its own uploads/outputs/jobs relative to backend/
+backend/uploads/*
+!backend/uploads/.gitkeep
+backend/outputs/*
+!backend/outputs/.gitkeep
+backend/jobs/*
+!backend/jobs/.gitkeep
+*.sqlite
+*.sqlite-journal
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
