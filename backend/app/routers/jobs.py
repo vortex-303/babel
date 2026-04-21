@@ -346,10 +346,17 @@ def cancel_job(job_id: int, session: Session = Depends(get_session)) -> dict:
     job = session.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
-    if job.status != JobStatus.TRANSLATING:
+    # Cancel works at any "not-yet-terminal" point: queued, pending approval,
+    # or already running. Pulls the job out of any worker's claim window.
+    cancelable = {
+        JobStatus.QUEUED,
+        JobStatus.PENDING_APPROVAL,
+        JobStatus.TRANSLATING,
+    }
+    if job.status not in cancelable:
         raise HTTPException(
             status_code=409,
-            detail=f"job is {job.status.value}, not translating",
+            detail=f"job is {job.status.value}, can't cancel",
         )
     job.status = JobStatus.FAILED
     job.error = "canceled by user"

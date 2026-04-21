@@ -279,7 +279,14 @@ export function AnalyzePanel({
   }, []);
 
   useEffect(() => {
-    if (jobStatus && TERMINAL.has(jobStatus.status)) {
+    // Optimistic "translating" flag only represents the click → poll-starts
+    // window; the real state lives in jobStatus.status. Clear it as soon as
+    // the server confirms the job has moved past the awaiting/starting
+    // phase so we don't show "Translating…" over a queued job.
+    if (
+      jobStatus &&
+      jobStatus.status !== "awaiting_glossary_review"
+    ) {
       setTranslating(false);
     }
   }, [jobStatus]);
@@ -290,7 +297,16 @@ export function AnalyzePanel({
       : 0;
 
   const isDone = jobStatus?.status === "done";
-  const isTranslating = jobStatus?.status === "translating" || translating;
+  const isFailed = jobStatus?.status === "failed";
+  const isQueued =
+    jobStatus?.status === "queued" || jobStatus?.status === "pending_approval";
+  const isTranslating = jobStatus?.status === "translating";
+  // Button is locked during any active state; also briefly during the
+  // optimistic local `translating` flag right after the click.
+  const buttonLocked = translating || isQueued || isTranslating;
+  // Cancel works for queued, pending-approval, and translating jobs — all
+  // pre-terminal states.
+  const canCancel = isQueued || isTranslating;
 
   return (
     <section className="mt-8 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-6">
@@ -501,7 +517,7 @@ export function AnalyzePanel({
           <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800 flex flex-wrap gap-2 items-center">
             <button
               type="button"
-              disabled={isTranslating || cancelBusy}
+              disabled={buttonLocked || cancelBusy}
               onClick={startTranslation}
               className="px-5 py-2 rounded-full bg-emerald-600 text-white text-sm font-medium disabled:opacity-50 hover:bg-emerald-500"
             >
@@ -509,9 +525,13 @@ export function AnalyzePanel({
                 ? "Translate again"
                 : isTranslating
                   ? "Translating…"
-                  : "Start translation"}
+                  : jobStatus?.status === "pending_approval"
+                    ? "Waiting for admin approval…"
+                    : jobStatus?.status === "queued"
+                      ? "Queued — waiting for worker…"
+                      : "Start translation"}
             </button>
-            {isTranslating && (
+            {canCancel && (
               <button
                 type="button"
                 disabled={cancelBusy}
@@ -539,9 +559,11 @@ export function AnalyzePanel({
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs text-zinc-500">
                 <span>
-                  {jobStatus.translated_chunks} / {jobStatus.chunk_count} chunks
+                  {isQueued
+                    ? `Waiting for a worker · ${jobStatus.chunk_count} chunks ready`
+                    : `${jobStatus.translated_chunks} / ${jobStatus.chunk_count} chunks`}
                 </span>
-                <span>{percent}%</span>
+                <span>{isQueued ? "queued" : `${percent}%`}</span>
               </div>
               <div className="h-2 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
                 <div
