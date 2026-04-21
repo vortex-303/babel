@@ -12,6 +12,8 @@ LATAM-first: Spanish variant picker (es-AR rioplatense, es-MX, es-ES, es-US, etc
 
 Full step-by-step walkthroughs are in **[INSTALL.md](./INSTALL.md)** — pick macOS (Apple Silicon), Linux + NVIDIA, or Linux CPU/AMD. Quick summary below.
 
+**Deploying to serve a public website** (e.g. babeltower.lat) from an Ubuntu GPU box? See **[DEPLOY-UBUNTU.md](./DEPLOY-UBUNTU.md)** — three scripts: `bootstrap-ubuntu.sh`, `tunnel-setup.sh`, `serve.sh`.
+
 ### macOS (Apple Silicon)
 
 ```bash
