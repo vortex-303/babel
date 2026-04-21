@@ -14,6 +14,7 @@ from app.config import settings
 from app.db import get_session, new_session
 from app.deps import require_admin
 from app.models import Chunk, Document, GlossaryTerm, Job, JobStatus
+from app.routers.worker import known_workers
 from app.services import queue as job_queue
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -77,6 +78,7 @@ async def admin_health(_: None = Depends(require_admin)) -> dict:
             "pending_approval": int(pending),
             "active": active_info,
         },
+        "workers": known_workers(),
     }
 
 

@@ -1,0 +1,14 @@
+[project]
+name = "babel-worker"
+version = "0.1.0"
+description = "Pull-worker for babel — runs translations locally against llama-server and streams results to the babel backend"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.27",
+]
+
+[project.scripts]
+babel-worker = "babel_worker.cli:main"
+
+[tool.setuptools]
+packages = ["babel_worker"]

@@ -26,3 +26,14 @@ def require_admin(x_admin_code: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=403, detail="admin gate not configured")
     if not x_admin_code or x_admin_code != settings.admin_code:
         raise HTTPException(status_code=403, detail="admin access required")
+
+
+def require_worker(authorization: str | None = Header(default=None)) -> None:
+    """Bearer-token auth for /api/worker/* endpoints. Token lives in the
+    BABEL_WORKER_TOKEN env var on the backend and in the worker's config."""
+    if not settings.worker_token:
+        raise HTTPException(status_code=403, detail="worker gate not configured")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    if authorization[len("Bearer ") :] != settings.worker_token:
+        raise HTTPException(status_code=403, detail="invalid worker token")

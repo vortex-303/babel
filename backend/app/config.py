@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     # so a misconfigured deploy can't leak them.
     admin_code: str = ""
 
+    # Worker auth — bearer token required by /api/worker/* endpoints.
+    # Empty disables the worker endpoints entirely (safest default).
+    worker_token: str = ""
+
+    # In-process queue worker. Convenient locally (./dev.sh runs backend +
+    # llama-server on one machine) but pointless on Fly (no llama-server).
+    # Default off on cloud; flip to 1 in your local .env.
+    inproc_worker: bool = False
+
     # Queue — admin controls whether new jobs go straight to QUEUED or wait
     # for manual admin approval.
     queue_mode: str = "auto"  # "auto" | "manual"

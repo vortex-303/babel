@@ -9,7 +9,7 @@ from sqlmodel import select
 from app.config import settings
 from app.db import init_db, new_session
 from app.models import Job, JobStatus
-from app.routers import admin, documents, jobs
+from app.routers import admin, documents, jobs, worker
 from app.services.queue import queue_loop
 from app.services.watchdog import watchdog_loop
 
@@ -52,15 +52,21 @@ async def lifespan(_: FastAPI):
             stuck_minutes=settings.watchdog_stuck_minutes,
         )
     )
-    queue_task = asyncio.create_task(
-        queue_loop(interval_seconds=settings.queue_interval_seconds)
-    )
+    # Only run the in-process queue worker when explicitly enabled. On Fly
+    # there's no llama-server, so the loop would just churn the queue.
+    # Pull-workers (worker/) handle production; inproc is for local dev.
+    queue_task: asyncio.Task | None = None
+    if settings.inproc_worker:
+        queue_task = asyncio.create_task(
+            queue_loop(interval_seconds=settings.queue_interval_seconds)
+        )
     try:
         yield
     finally:
-        for task in (watchdog_task, queue_task):
+        tasks = [t for t in (watchdog_task, queue_task) if t is not None]
+        for task in tasks:
             task.cancel()
-        for task in (watchdog_task, queue_task):
+        for task in tasks:
             try:
                 await task
             except asyncio.CancelledError:
@@ -79,6 +85,7 @@ app.add_middleware(
 app.include_router(documents.router)
 app.include_router(jobs.router)
 app.include_router(admin.router)
+app.include_router(worker.router)
 
 
 @app.get("/health")
