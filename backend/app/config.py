@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     # Non-admin limits.
     max_upload_mb_nonadmin: int = 10
     max_word_count_nonadmin: int = 80000  # ~ one 300-page book
+    # Max documents allowed in the system from non-admin uploaders at any
+    # one time. Admin bypasses. When hit, non-admin upload returns 429.
+    max_documents_nonadmin: int = 10
     # How long to keep documents/chunks before purge (admin-only purge for now).
     retention_days: int = 7
 

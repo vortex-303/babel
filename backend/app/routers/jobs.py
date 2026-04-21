@@ -347,6 +347,22 @@ def _list_glossary(job_id: int, session: Session) -> list[dict]:
     ]
 
 
+@router.delete("/{job_id}")
+def delete_job(job_id: int, session: Session = Depends(get_session)) -> dict:
+    """Remove a single translation version (the Job) and its chunks +
+    glossary. Leaves the source Document intact so other versions keep
+    working."""
+    job = session.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    session.exec(delete(Chunk).where(Chunk.job_id == job_id))
+    session.exec(delete(GlossaryTerm).where(GlossaryTerm.job_id == job_id))
+    session.delete(job)
+    session.commit()
+    return {"ok": True, "deleted_job_id": job_id}
+
+
 @router.post("/{job_id}/cancel")
 def cancel_job(job_id: int, session: Session = Depends(get_session)) -> dict:
     job = session.get(Job, job_id)

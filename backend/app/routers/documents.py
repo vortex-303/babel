@@ -4,12 +4,13 @@ import secrets
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from sqlmodel import Session, select
+from sqlalchemy import delete
+from sqlmodel import Session, func, select
 
 from app.config import settings
 from app.db import get_session
 from app.deps import is_admin
-from app.models import Document
+from app.models import Chunk, Document, GlossaryTerm, Job
 from app.services import ingest as ingest_service
 from app.services.analyzer import count_tokens
 from app.services.langdetect_util import detect_language
@@ -45,6 +46,22 @@ async def upload_document(
     stored_name = _safe_name(original)
     storage_key = f"source/{stored_name}"
     data = await file.read()
+
+    # Non-admin total-documents cap. Keeps the free tier bounded; admin
+    # can purge via /admin/purge to make room.
+    if not admin:
+        doc_count = session.exec(
+            select(func.count()).select_from(Document)
+        ).one()
+        if int(doc_count) >= settings.max_documents_nonadmin:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"upload cap reached: {settings.max_documents_nonadmin} "
+                    f"documents in the system. Contact admin or wait for "
+                    f"the retention window to expire."
+                ),
+            )
 
     # Non-admin upload size cap. Admins bypass (they're running the GPU).
     if not admin:
@@ -125,6 +142,37 @@ def get_document(doc_id: int, session: Session = Depends(get_session)) -> dict:
     if not doc:
         raise HTTPException(status_code=404, detail="document not found")
     return _serialize(doc)
+
+
+@router.delete("/{doc_id}")
+def delete_document(
+    doc_id: int, session: Session = Depends(get_session)
+) -> dict:
+    """Remove a document, its storage blob, and every job + chunk + glossary
+    term associated with it. Cascading delete — use with care."""
+    doc = session.get(Document, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="document not found")
+
+    # Purge cascading rows first (no DB-level cascade on SQLite).
+    job_ids = [
+        j.id
+        for j in session.exec(select(Job).where(Job.document_id == doc_id)).all()
+    ]
+    if job_ids:
+        session.exec(delete(Chunk).where(Chunk.job_id.in_(job_ids)))
+        session.exec(delete(GlossaryTerm).where(GlossaryTerm.job_id.in_(job_ids)))
+        session.exec(delete(Job).where(Job.id.in_(job_ids)))
+
+    # Best-effort remove the stored file.
+    try:
+        get_storage().delete(doc.stored_path)
+    except Exception:
+        pass  # file already gone / storage transient — keep purging the row
+
+    session.delete(doc)
+    session.commit()
+    return {"ok": True, "deleted_document_id": doc_id, "deleted_jobs": len(job_ids)}
 
 
 def _serialize(d: Document) -> dict:
