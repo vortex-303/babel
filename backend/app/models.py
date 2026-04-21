@@ -25,6 +25,8 @@ class Document(SQLModel, table=True):
     word_count: int = 0
     token_count: int = 0
     stored_path: str
+    detected_lang: Optional[str] = None
+    detected_lang_confidence: Optional[float] = None
     uploaded_at: datetime = Field(default_factory=datetime.utcnow)
 
 

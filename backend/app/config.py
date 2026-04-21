@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     # adapter as "previous passage" context (not re-translated).
     context_chars: int = 600
 
+    # Watchdog — mark TRANSLATING jobs as FAILED when no chunk has progressed
+    # in this many minutes. Sweep runs every watchdog_interval_seconds.
+    watchdog_stuck_minutes: int = 10
+    watchdog_interval_seconds: int = 60
+
     def ensure_dirs(self) -> None:
         for d in (self.data_dir, self.uploads_dir, self.outputs_dir):
             d.mkdir(parents=True, exist_ok=True)

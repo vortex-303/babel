@@ -45,6 +45,15 @@ type JobChunk = {
   translated: string | null;
 };
 
+type GlossaryEntry = {
+  id: number | null;
+  source_term: string;
+  target_term: string | null;
+  notes: string | null;
+  locked: boolean;
+  occurrences: number;
+};
+
 const ADAPTERS: { value: string; label: string }[] = [
   { value: "llamacpp", label: "llama.cpp (local)" },
   { value: "ollama", label: "Ollama (local)" },
@@ -63,9 +72,17 @@ function formatDuration(seconds: number | null): string {
   return `${h}h ${m}m`;
 }
 
-export function AnalyzePanel({ documentId }: { documentId: number }) {
+export function AnalyzePanel({
+  documentId,
+  detectedLang,
+  detectedLangConfidence,
+}: {
+  documentId: number;
+  detectedLang?: string | null;
+  detectedLangConfidence?: number | null;
+}) {
   const [adapter, setAdapter] = useState<string>("llamacpp");
-  const [source, setSource] = useState("en");
+  const [source, setSource] = useState(detectedLang ?? "en");
   const [target, setTarget] = useState("es");
   const [esVariant, setEsVariant] = useState("es-419");
   const [ptVariant, setPtVariant] = useState("pt-BR");
@@ -79,6 +96,10 @@ export function AnalyzePanel({ documentId }: { documentId: number }) {
   const [translateError, setTranslateError] = useState<string | null>(null);
   const [cancelBusy, setCancelBusy] = useState(false);
   const pollRef = useRef<number | null>(null);
+
+  const [glossary, setGlossary] = useState<GlossaryEntry[] | null>(null);
+  const [glossaryBusy, setGlossaryBusy] = useState(false);
+  const [glossaryError, setGlossaryError] = useState<string | null>(null);
 
   // Resolve the actual target_lang sent to the backend — if user picks es/pt,
   // use the selected variant so the backend + system prompt see e.g. "es-AR".
@@ -182,6 +203,51 @@ export function AnalyzePanel({ documentId }: { documentId: number }) {
     }
   };
 
+  const extractGlossary = async () => {
+    if (!result) return;
+    setGlossaryBusy(true);
+    setGlossaryError(null);
+    try {
+      const res = await fetch(`/api/jobs/${result.id}/extract-glossary`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(await errorText(res));
+      setGlossary((await res.json()) as GlossaryEntry[]);
+    } catch (e) {
+      setGlossaryError(e instanceof Error ? e.message : "extract failed");
+    } finally {
+      setGlossaryBusy(false);
+    }
+  };
+
+  const saveGlossary = async () => {
+    if (!result || !glossary) return;
+    setGlossaryBusy(true);
+    setGlossaryError(null);
+    try {
+      const res = await fetch(`/api/jobs/${result.id}/glossary`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ entries: glossary }),
+      });
+      if (!res.ok) throw new Error(await errorText(res));
+      setGlossary((await res.json()) as GlossaryEntry[]);
+    } catch (e) {
+      setGlossaryError(e instanceof Error ? e.message : "save failed");
+    } finally {
+      setGlossaryBusy(false);
+    }
+  };
+
+  const updateGlossaryTarget = (idx: number, target: string) => {
+    setGlossary((prev) => {
+      if (!prev) return prev;
+      const next = [...prev];
+      next[idx] = { ...next[idx], target_term: target || null };
+      return next;
+    });
+  };
+
   const cancelTranslation = async () => {
     if (!result) return;
     setCancelBusy(true);
@@ -228,6 +294,26 @@ export function AnalyzePanel({ documentId }: { documentId: number }) {
   return (
     <section className="mt-8 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 p-6">
       <h2 className="text-base font-medium mb-4">Analyze translation job</h2>
+      {detectedLang && detectedLang !== source && (
+        <div className="mb-4 rounded-md border border-amber-400/40 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+          We detected the document language as{" "}
+          <strong>{detectedLang}</strong>
+          {detectedLangConfidence != null && (
+            <> (confidence {Math.round(detectedLangConfidence * 100)}%)</>
+          )}
+          , but you have <strong>From</strong> set to{" "}
+          <strong>{source}</strong>. Translation will run the wrong direction
+          unless you switch{" "}
+          <button
+            type="button"
+            onClick={() => setSource(detectedLang)}
+            className="underline font-medium"
+          >
+            From → {detectedLang}
+          </button>
+          .
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
         <Field label="From">
           <LanguageSelect value={source} onChange={setSource} />
@@ -327,7 +413,91 @@ export function AnalyzePanel({ documentId }: { documentId: number }) {
             </span>
           </p>
 
-          <div className="pt-2 border-t border-zinc-200 dark:border-zinc-800 flex flex-wrap gap-2 items-center">
+          <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-medium">
+                Glossary{" "}
+                <span className="text-xs text-zinc-500 font-normal">
+                  (review before translation for consistent names)
+                </span>
+              </h3>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={glossaryBusy}
+                  onClick={extractGlossary}
+                  className="px-3 py-1.5 rounded-full border border-zinc-300 dark:border-zinc-700 text-xs font-medium disabled:opacity-50 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+                >
+                  {glossaryBusy
+                    ? "Working…"
+                    : glossary
+                      ? "Re-extract"
+                      : "Extract terms"}
+                </button>
+                {glossary && glossary.length > 0 && (
+                  <button
+                    type="button"
+                    disabled={glossaryBusy}
+                    onClick={saveGlossary}
+                    className="px-3 py-1.5 rounded-full bg-zinc-900 text-white text-xs font-medium disabled:opacity-50 dark:bg-white dark:text-black"
+                  >
+                    Save
+                  </button>
+                )}
+              </div>
+            </div>
+            {glossaryError && (
+              <p className="text-sm text-red-600 dark:text-red-400">
+                {glossaryError}
+              </p>
+            )}
+            {glossary && glossary.length > 0 && (
+              <div className="max-h-80 overflow-y-auto rounded-md border border-zinc-200 dark:border-zinc-800">
+                <table className="w-full text-sm">
+                  <thead className="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium w-10">#</th>
+                      <th className="text-left px-3 py-2 font-medium">Source</th>
+                      <th className="text-left px-3 py-2 font-medium">
+                        Target ({target})
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {glossary.map((g, i) => (
+                      <tr
+                        key={g.source_term + i}
+                        className="border-t border-zinc-200 dark:border-zinc-800"
+                      >
+                        <td className="px-3 py-1.5 text-xs text-zinc-500">
+                          {g.occurrences}×
+                        </td>
+                        <td className="px-3 py-1.5">{g.source_term}</td>
+                        <td className="px-3 py-1.5">
+                          <input
+                            value={g.target_term ?? ""}
+                            onChange={(e) =>
+                              updateGlossaryTarget(i, e.target.value)
+                            }
+                            placeholder="(leave blank to let model decide)"
+                            className="w-full bg-transparent border-b border-transparent focus:border-zinc-400 dark:focus:border-zinc-600 focus:outline-none py-0.5 text-sm"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {glossary && glossary.length === 0 && (
+              <p className="text-xs text-zinc-500">
+                No recurring capitalized terms found. Short docs or highly
+                narrative text often lack glossary candidates.
+              </p>
+            )}
+          </div>
+
+          <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800 flex flex-wrap gap-2 items-center">
             <button
               type="button"
               disabled={isTranslating || cancelBusy}

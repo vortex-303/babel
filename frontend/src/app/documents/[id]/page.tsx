@@ -10,6 +10,8 @@ type Document = {
   page_count: number;
   word_count: number;
   token_count: number;
+  detected_lang: string | null;
+  detected_lang_confidence: number | null;
   uploaded_at: string;
 };
 
@@ -66,7 +68,11 @@ export default async function DocumentPage({
           <Stat label="Size" value={formatBytes(doc.size_bytes)} />
         </section>
 
-        <AnalyzePanel documentId={doc.id} />
+        <AnalyzePanel
+          documentId={doc.id}
+          detectedLang={doc.detected_lang}
+          detectedLangConfidence={doc.detected_lang_confidence}
+        />
       </main>
     </div>
   );

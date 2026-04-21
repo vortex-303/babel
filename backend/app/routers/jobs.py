@@ -12,9 +12,10 @@ from sqlmodel import Session, func, select
 from app.adapters import IMPLEMENTED_ADAPTERS, get_adapter
 from app.config import settings
 from app.db import get_session, new_session
-from app.models import Chunk, Document, Job, JobStatus
+from app.models import Chunk, Document, GlossaryTerm, Job, JobStatus
 from app.services.analyzer import ADAPTER_PROFILES, chunk_document, estimate
 from app.services.assemble import ASSEMBLERS
+from app.services.glossary import extract_terms
 from app.services.ingest import ingest as ingest_document
 from app.services.translate import translate_job
 
@@ -182,6 +183,115 @@ def start_translate(
 
     doc = session.get(Document, job.document_id)
     return _serialize_job(job, doc)
+
+
+class GlossaryEntry(BaseModel):
+    id: int | None = None
+    source_term: str
+    target_term: str | None = None
+    notes: str | None = None
+    locked: bool = True
+    occurrences: int = 0
+
+
+class GlossaryUpdate(BaseModel):
+    entries: list[GlossaryEntry]
+
+
+@router.post("/{job_id}/extract-glossary")
+def extract_glossary(
+    job_id: int,
+    session: Session = Depends(get_session),
+    top_n: int = Query(50, ge=1, le=200),
+    min_occurrences: int = Query(2, ge=1),
+) -> list[dict]:
+    """Scan the source document for capitalized multi-word terms, persist them
+    as GlossaryTerm rows (replaces any existing rows for this job). Returns
+    the extracted list for UI review."""
+    job = session.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    doc = session.get(Document, job.document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="document missing")
+    stored = Path(doc.stored_path)
+    if not stored.exists():
+        raise HTTPException(status_code=410, detail="uploaded file no longer on disk")
+
+    ingested = ingest_document(stored)
+    extracted = extract_terms(
+        ingested.full_text,
+        top_n=top_n,
+        min_occurrences=min_occurrences,
+    )
+
+    session.exec(delete(GlossaryTerm).where(GlossaryTerm.job_id == job_id))
+    for term in extracted:
+        session.add(
+            GlossaryTerm(
+                job_id=job_id,
+                source_term=term.source_term,
+                target_term=None,
+                occurrences=term.occurrences,
+                locked=True,
+            )
+        )
+    session.commit()
+
+    return _list_glossary(job_id, session)
+
+
+@router.get("/{job_id}/glossary")
+def get_glossary(job_id: int, session: Session = Depends(get_session)) -> list[dict]:
+    if not session.get(Job, job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    return _list_glossary(job_id, session)
+
+
+@router.put("/{job_id}/glossary")
+def update_glossary(
+    job_id: int,
+    body: GlossaryUpdate,
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    if not session.get(Job, job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+    # Wipe + rewrite. Keeps the endpoint idempotent and avoids juggling ids.
+    session.exec(delete(GlossaryTerm).where(GlossaryTerm.job_id == job_id))
+    for e in body.entries:
+        if not e.source_term.strip():
+            continue
+        session.add(
+            GlossaryTerm(
+                job_id=job_id,
+                source_term=e.source_term.strip(),
+                target_term=(e.target_term or None),
+                notes=e.notes,
+                locked=e.locked,
+                occurrences=e.occurrences,
+            )
+        )
+    session.commit()
+    return _list_glossary(job_id, session)
+
+
+def _list_glossary(job_id: int, session: Session) -> list[dict]:
+    rows = session.exec(
+        select(GlossaryTerm)
+        .where(GlossaryTerm.job_id == job_id)
+        .order_by(GlossaryTerm.occurrences.desc(), GlossaryTerm.source_term)
+    ).all()
+    return [
+        {
+            "id": g.id,
+            "source_term": g.source_term,
+            "target_term": g.target_term,
+            "notes": g.notes,
+            "locked": g.locked,
+            "occurrences": g.occurrences,
+        }
+        for g in rows
+    ]
 
 
 @router.post("/{job_id}/cancel")
