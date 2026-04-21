@@ -12,7 +12,9 @@ LATAM-first: Spanish variant picker (es-AR rioplatense, es-MX, es-ES, es-US, etc
 
 Full step-by-step walkthroughs are in **[INSTALL.md](./INSTALL.md)** — pick macOS (Apple Silicon), Linux + NVIDIA, or Linux CPU/AMD. Quick summary below.
 
-**Deploying to serve a public website** (e.g. babeltower.lat) from an Ubuntu GPU box? See **[DEPLOY-UBUNTU.md](./DEPLOY-UBUNTU.md)** — three scripts: `bootstrap-ubuntu.sh`, `tunnel-setup.sh`, `serve.sh`.
+**Running a pull-worker on your Mac / Linux box** (so jobs posted to babeltower.lat actually translate on your GPU) — see **[docs/WORKERS.md](./docs/WORKERS.md)**. Works on macOS (Metal) and Ubuntu 22.04 / 24.04 (NVIDIA), same flow.
+
+**Deploying your own babeltower-style website from scratch**? See **[DEPLOY-UBUNTU.md](./DEPLOY-UBUNTU.md)** for the Ubuntu + tunnel setup that predates the pull-worker split.
 
 ### macOS (Apple Silicon)
 
