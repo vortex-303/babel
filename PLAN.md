@@ -56,6 +56,16 @@ Free tier: **10,000 words/month per account** (one sample chapter).
 
 Admin (Nicolas): unlimited.
 
+### Hard capacity caps (non-admin, current config)
+
+| Cap | Value | Why |
+|---|---|---|
+| Max file size | **30 MB** per upload | Room for a 500-page PDF with images |
+| Max words per doc | **200,000** | ≈ 600-page novel; beyond this, worker run-time gets painful |
+| Max documents | **3** in the system at once | Keeps total storage < 90 MB (well under Supabase free tier 1 GB). Purge via `/admin` frees slots. |
+
+Worst-case per non-admin submitter: 3 × 30 MB = 90 MB of sources, 600k words of translation ≈ 5 h of M-series GPU time at 35 tok/s. Admin bypasses all three caps.
+
 ### Payments
 Stripe Checkout for credit purchase. No contributor marketplace in v1 — that's phase G below.
 

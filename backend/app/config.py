@@ -56,12 +56,12 @@ class Settings(BaseSettings):
     # Time between queue-worker sweeps (picks next QUEUED job and runs it).
     queue_interval_seconds: int = 3
 
-    # Non-admin limits.
-    max_upload_mb_nonadmin: int = 10
-    max_word_count_nonadmin: int = 80000  # ~ one 300-page book
-    # Max documents allowed in the system from non-admin uploaders at any
-    # one time. Admin bypasses. When hit, non-admin upload returns 429.
-    max_documents_nonadmin: int = 10
+    # Non-admin hard caps. Chosen so 3 full-sized books fit comfortably
+    # in Supabase's free tier (~90 MB max of source blobs across all
+    # non-admin uploads) and the worker drain-time stays under ~5 h.
+    max_upload_mb_nonadmin: int = 30        # ≈ 500-page PDF with images
+    max_word_count_nonadmin: int = 200000   # ≈ 600-page novel
+    max_documents_nonadmin: int = 3         # 3 books at a time
     # How long to keep documents/chunks before purge (admin-only purge for now).
     retention_days: int = 7
 

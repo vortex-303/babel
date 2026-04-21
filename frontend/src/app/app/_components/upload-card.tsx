@@ -77,7 +77,7 @@ export function UploadCard() {
         {busy ? "Uploading & ingesting…" : "Drop a document to translate"}
       </div>
       <p className="text-sm text-zinc-500 mb-6">
-        EPUB · PDF · DOCX · TXT · MD — up to several hundred pages
+        EPUB · PDF · DOCX · TXT · MD — up to 30 MB, 200k words, 3 files total
       </p>
       <label
         className={`inline-flex items-center px-5 py-2 rounded-full text-sm font-medium transition-colors ${
