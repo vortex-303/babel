@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # babel-worker — install on macOS or Linux.
-# Idempotent. Prompts for the missing bits.
+# Idempotent. Prompts for the missing bits. Uses a dedicated venv so it
+# never fights with your system Python or uv's externally-managed one.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORKER_DIR="$ROOT/worker"
 CFG_DIR="$HOME/.config/babel-worker"
 CFG_FILE="$CFG_DIR/config.env"
+VENV_DIR="$HOME/.local/share/babel-worker/venv"
+BIN_DIR="$HOME/.local/bin"
 LOG_DIR="$HOME/.local/state/babel-worker"
+WORKER_BIN="$VENV_DIR/bin/babel-worker"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 say()  { printf '\033[1;32m•\033[0m %s\n' "$*"; }
@@ -20,35 +24,40 @@ case "$(uname -s)" in
   *)      die "unsupported OS: $(uname -s)" ;;
 esac
 
-# ----- 1. Python + pipx/uv ------------------------------------------------
 have python3 || die "python3 not installed"
 
-if have uv; then
-  PY_INSTALLER="uv pip install --system"
-elif have pipx; then
-  PY_INSTALLER="pipx install --force"
-else
-  say "neither uv nor pipx found — installing via user pip"
-  PY_INSTALLER="python3 -m pip install --user"
-fi
-
-say "installing babel-worker package…"
-pushd "$WORKER_DIR" >/dev/null
-case "$PY_INSTALLER" in
-  uv*)    uv pip install --system -e . ;;
-  pipx*)  pipx install --force -e . ;;
-  *)      python3 -m pip install --user -e . ;;
-esac
-popd >/dev/null
-
-have babel-worker || die "babel-worker on PATH check failed — add $(python3 -m site --user-base)/bin to PATH and re-run"
-
-say "babel-worker installed: $(which babel-worker)"
-
-# ----- 2. Config file -----------------------------------------------------
-mkdir -p "$CFG_DIR" "$LOG_DIR"
+mkdir -p "$CFG_DIR" "$LOG_DIR" "$BIN_DIR" "$(dirname "$VENV_DIR")"
 chmod 700 "$CFG_DIR"
 
+# ----- 1. Dedicated venv --------------------------------------------------
+if [ ! -x "$VENV_DIR/bin/python" ]; then
+  if have uv; then
+    say "creating venv via uv → $VENV_DIR"
+    uv venv "$VENV_DIR"
+  else
+    say "creating venv via python3 -m venv → $VENV_DIR"
+    python3 -m venv "$VENV_DIR"
+  fi
+else
+  say "venv already present: $VENV_DIR"
+fi
+
+# ----- 2. Install worker package into the venv ---------------------------
+say "installing babel-worker into the venv…"
+if have uv; then
+  uv pip install --python "$VENV_DIR/bin/python" -e "$WORKER_DIR"
+else
+  "$VENV_DIR/bin/pip" install --quiet --upgrade pip
+  "$VENV_DIR/bin/pip" install --quiet -e "$WORKER_DIR"
+fi
+
+[ -x "$WORKER_BIN" ] || die "babel-worker not found at $WORKER_BIN after install"
+
+# ----- 3. Symlink to ~/.local/bin/babel-worker ---------------------------
+ln -sf "$WORKER_BIN" "$BIN_DIR/babel-worker"
+say "babel-worker available at: $BIN_DIR/babel-worker (→ $WORKER_BIN)"
+
+# ----- 4. Config file ----------------------------------------------------
 if [ ! -f "$CFG_FILE" ]; then
   say "first-time config — answer two questions"
   read -rp "Backend URL [https://api.babeltower.lat]: " BACKEND_URL
@@ -75,7 +84,7 @@ else
   say "config exists: $CFG_FILE (not overwriting — edit by hand if needed)"
 fi
 
-# ----- 3. System service --------------------------------------------------
+# ----- 5. System service --------------------------------------------------
 if [ "$OS" = mac ]; then
   PLIST="$HOME/Library/LaunchAgents/com.vortex303.babel-worker.plist"
   say "installing launchd agent: $PLIST"
@@ -88,7 +97,7 @@ if [ "$OS" = mac ]; then
   <key>Label</key>            <string>com.vortex303.babel-worker</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$(which babel-worker)</string>
+    <string>$WORKER_BIN</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -102,11 +111,11 @@ if [ "$OS" = mac ]; then
 </plist>
 EOF
 
-  # Reload if already loaded, then load.
   launchctl unload "$PLIST" 2>/dev/null || true
   launchctl load -w "$PLIST"
-  say "launchd agent loaded. Tail logs with:"
-  echo "    tail -F $LOG_DIR/stderr.log"
+  say "launchd agent loaded."
+  echo "    Logs:    tail -F $LOG_DIR/stderr.log"
+  echo "    Stop:    launchctl unload $PLIST"
 
 else
   UNIT="$HOME/.config/systemd/user/babel-worker.service"
@@ -120,7 +129,7 @@ After=network.target
 [Service]
 Type=simple
 EnvironmentFile=$CFG_FILE
-ExecStart=$(which babel-worker)
+ExecStart=$WORKER_BIN
 Restart=on-failure
 RestartSec=5
 StandardOutput=append:$LOG_DIR/stdout.log
@@ -132,22 +141,23 @@ EOF
 
   systemctl --user daemon-reload
   systemctl --user enable --now babel-worker.service
-  say "systemd service started. Tail logs with:"
-  echo "    journalctl --user -u babel-worker -f"
-  warn "On some distros you also need: sudo loginctl enable-linger $USER"
-  warn "so the service keeps running after you log out."
+  say "systemd service started."
+  echo "    Logs:    journalctl --user -u babel-worker -f"
+  echo "    Stop:    systemctl --user stop babel-worker"
+  warn "On some distros: sudo loginctl enable-linger $USER"
+  warn "  (otherwise the service stops when you log out)"
 fi
 
 cat <<EOF
 
 \033[1;32m✓ babel-worker installed and running\033[0m
 
+  Venv:    $VENV_DIR
+  Binary:  $WORKER_BIN
   Config:  $CFG_FILE
   Logs:    $LOG_DIR/{stdout,stderr}.log
-  Uninstall: $(basename "$0" .sh)-uninstall.sh (TODO)
 
-To verify the worker is reaching the backend, check the admin panel:
-  https://babeltower.lat/admin  → Workers list should show this machine
-  within 30 seconds.
+Verify in the admin panel within 30 seconds:
+  https://babeltower.lat/admin   → "Workers" list should include this machine.
 
 EOF
