@@ -185,6 +185,14 @@ def _queue_submenu(controller: Controller) -> pystray.Menu:
     if not queue:
         return pystray.Menu(pystray.MenuItem("No jobs waiting", None, enabled=False))
 
+    # Factory for click handlers — pystray's _assert_action dislikes closures
+    # with kwarg defaults, so we build a proper 2-arg function for each item.
+    def _make_handler(job_id: int):
+        def _action(icon, item):
+            controller.request_claim(job_id)
+            controller.log_event(f"Requested claim on job #{job_id}")
+        return _action
+
     items: list[pystray.MenuItem] = []
     for q in queue[:20]:
         label_name = q.document_filename or f"job #{q.job_id}"
@@ -192,11 +200,7 @@ def _queue_submenu(controller: Controller) -> pystray.Menu:
             f"{label_name} · {q.source_lang}→{q.target_lang} "
             f"· {q.chunk_count} chunks"
         )
-        # Each clickable item captures its own job_id.
-        def _request(_icon, _item, jid=q.job_id):
-            controller.request_claim(jid)
-            controller.log_event(f"Requested claim on job #{jid}")
-        items.append(pystray.MenuItem(label, _request))
+        items.append(pystray.MenuItem(label, _make_handler(q.job_id)))
     return pystray.Menu(*items)
 
 
