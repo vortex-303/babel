@@ -43,12 +43,22 @@ else
 fi
 
 # ----- 2. Install worker package into the venv ---------------------------
-say "installing babel-worker into the venv…"
+EXTRAS=""
+if [ "$OS" = mac ]; then
+  read -rp "Install menu-bar tray icon? [Y/n] " ans
+  case "$ans" in
+    [nN]*) EXTRAS="" ;;
+    *)     EXTRAS="[tray]" ;;
+  esac
+fi
+PKG_SPEC="$WORKER_DIR${EXTRAS}"
+
+say "installing babel-worker${EXTRAS:+ (with tray)} into the venv…"
 if have uv; then
-  uv pip install --python "$VENV_DIR/bin/python" -e "$WORKER_DIR"
+  uv pip install --python "$VENV_DIR/bin/python" -e "$PKG_SPEC"
 else
   "$VENV_DIR/bin/pip" install --quiet --upgrade pip
-  "$VENV_DIR/bin/pip" install --quiet -e "$WORKER_DIR"
+  "$VENV_DIR/bin/pip" install --quiet -e "$PKG_SPEC"
 fi
 
 [ -x "$WORKER_BIN" ] || die "babel-worker not found at $WORKER_BIN after install"
@@ -88,6 +98,8 @@ fi
 if [ "$OS" = mac ]; then
   PLIST="$HOME/Library/LaunchAgents/com.vortex303.babel-worker.plist"
   say "installing launchd agent: $PLIST"
+  TRAY_FLAG=""
+  [ -n "$EXTRAS" ] && TRAY_FLAG="    <string>--tray</string>"
   cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -98,6 +110,7 @@ if [ "$OS" = mac ]; then
   <key>ProgramArguments</key>
   <array>
     <string>$WORKER_BIN</string>
+$TRAY_FLAG
   </array>
   <key>EnvironmentVariables</key>
   <dict>
