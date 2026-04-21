@@ -60,11 +60,23 @@ Admin (Nicolas): unlimited.
 
 | Cap | Value | Why |
 |---|---|---|
-| Max file size | **30 MB** per upload | Room for a 500-page PDF with images |
-| Max words per doc | **200,000** | ≈ 600-page novel; beyond this, worker run-time gets painful |
-| Max documents | **3** in the system at once | Keeps total storage < 90 MB (well under Supabase free tier 1 GB). Purge via `/admin` frees slots. |
+| Max file size | **100 MB** per upload | Beats DeepL (10 MB), BookTranslator.ai (50 MB EPUB), Google Translate (10 MB). Covers heavy scanned PDFs. |
+| Max words per doc | **500,000** | Handles all mainstream novels + most epics. War and Peace (587k) is the rare outlier. |
+| Max documents | **3** at once | Concurrency knob — queue serializes so 3 = "3 simultaneous book translations allowed per non-admin submitter". |
 
-Worst-case per non-admin submitter: 3 × 30 MB = 90 MB of sources, 600k words of translation ≈ 5 h of M-series GPU time at 35 tok/s. Admin bypasses all three caps.
+Worst-case per non-admin submitter: 3 × 100 MB = 300 MB of sources (still under Supabase free tier 1 GB with headroom for translated outputs). 3 × 500k words ≈ 1.5 M words ≈ 12 h of M-series GPU time at 35 tok/s (one overnight session). Admin bypasses all three caps.
+
+### Why bigger than competitors
+
+"No page caps" is the wedge on the landing page — these numbers are what make that claim honest. Benchmark:
+
+| Provider | Per-file | Per-month |
+|---|---|---|
+| DeepL Pro | 10 MB | 3 docs |
+| BookTranslator.ai | 50 MB EPUB | limited by credits |
+| Google Translate | 10 MB / 10k chars | unlimited but capped per file |
+| ChatGPT 4-Turbo | 128k tokens context | per-query |
+| **babel (non-admin)** | **100 MB** | **3 concurrent** |
 
 ### Payments
 Stripe Checkout for credit purchase. No contributor marketplace in v1 — that's phase G below.

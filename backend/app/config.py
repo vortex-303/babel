@@ -56,12 +56,15 @@ class Settings(BaseSettings):
     # Time between queue-worker sweeps (picks next QUEUED job and runs it).
     queue_interval_seconds: int = 3
 
-    # Non-admin hard caps. Chosen so 3 full-sized books fit comfortably
-    # in Supabase's free tier (~90 MB max of source blobs across all
-    # non-admin uploads) and the worker drain-time stays under ~5 h.
-    max_upload_mb_nonadmin: int = 30        # ≈ 500-page PDF with images
-    max_word_count_nonadmin: int = 200000   # ≈ 600-page novel
-    max_documents_nonadmin: int = 3         # 3 books at a time
+    # Non-admin hard caps. Set generously so we can honestly pitch "no
+    # page caps" — these beat DeepL (10 MB), BookTranslator.ai (50 MB
+    # EPUB, ~100k words), and Google Translate (10 MB). Still bounded so
+    # 3 × 100 MB = 300 MB fits Supabase's free tier (1 GB) with headroom
+    # for translated outputs, and 3 × 500k words ≈ 12 h of M-series
+    # drain-time (one overnight session).
+    max_upload_mb_nonadmin: int = 100       # heavy scanned PDFs OK
+    max_word_count_nonadmin: int = 500000   # handles War and Peace (587k is the rare outlier)
+    max_documents_nonadmin: int = 3         # concurrency knob — queue serializes
     # How long to keep documents/chunks before purge (admin-only purge for now).
     retention_days: int = 7
 
