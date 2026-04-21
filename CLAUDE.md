@@ -86,9 +86,10 @@ print(bytes(f.parts[f.data[0]]).decode())
 ```
 
 The cached GGUF from llama-server `-hf` lives at:
-`~/.cache/huggingface/hub/models--mradermacher--translategemma-4b-it-GGUF/blobs/<hash>`
+- **macOS**: `~/Library/Caches/llama.cpp/` (llama.cpp native cache) and/or `~/.cache/huggingface/hub/models--<repo>/blobs/<hash>` (HF hub cache)
+- **Linux**: `~/.cache/llama.cpp/` and/or `~/.cache/huggingface/hub/models--<repo>/blobs/<hash>`
 
-Find the active path via `lsof -p $(pgrep llama-server) | grep gguf`.
+Find the active path on any OS via `lsof -p $(pgrep llama-server) | grep gguf`.
 
 ### Language code normalization
 
