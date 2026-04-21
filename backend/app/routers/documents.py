@@ -13,6 +13,7 @@ from app.models import Document
 from app.services import ingest as ingest_service
 from app.services.analyzer import count_tokens
 from app.services.langdetect_util import detect_language
+from app.services.storage import get_storage
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -40,8 +41,9 @@ async def upload_document(
         )
 
     settings.ensure_dirs()
+    storage = get_storage()
     stored_name = _safe_name(original)
-    stored_path = settings.uploads_dir / stored_name
+    storage_key = f"source/{stored_name}"
     data = await file.read()
 
     # Non-admin upload size cap. Admins bypass (they're running the GPU).
@@ -56,12 +58,13 @@ async def upload_document(
                 ),
             )
 
-    stored_path.write_bytes(data)
+    storage.put(storage_key, data, content_type=file.content_type)
 
     try:
-        ingested = ingest_service.ingest(stored_path)
+        with storage.as_local_path(storage_key) as local_path:
+            ingested = ingest_service.ingest(local_path)
     except Exception as e:
-        stored_path.unlink(missing_ok=True)
+        storage.delete(storage_key)
         raise HTTPException(status_code=400, detail=f"ingest failed: {e}") from e
 
     word_count = ingested.word_count
@@ -70,7 +73,7 @@ async def upload_document(
 
     # Non-admin word-count cap — prevents users from queueing a 500k-word tome.
     if not admin and word_count > settings.max_word_count_nonadmin:
-        stored_path.unlink(missing_ok=True)
+        storage.delete(storage_key)
         raise HTTPException(
             status_code=413,
             detail=(
@@ -86,7 +89,7 @@ async def upload_document(
         page_count=ingested.page_count,
         word_count=word_count,
         token_count=token_count,
-        stored_path=str(stored_path),
+        stored_path=storage_key,
         detected_lang=detected_lang,
         detected_lang_confidence=detected_conf,
     )

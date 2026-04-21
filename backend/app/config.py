@@ -56,6 +56,16 @@ class Settings(BaseSettings):
     # Optional Sentry DSN. If set, initialized in main.py lifespan.
     sentry_dsn: str = ""
 
+    # --- Cloud mode (leave empty to stay fully local) ---
+    # If set, overrides the SQLite path. Typical value:
+    #   postgresql://postgres:<pw>@db.<ref>.supabase.co:5432/postgres?sslmode=require
+    database_url: str = ""
+
+    # Supabase Storage — leave empty to write files to local disk instead.
+    supabase_url: str = ""
+    supabase_service_key: str = ""
+    storage_bucket: str = "babel"
+
     def ensure_dirs(self) -> None:
         for d in (self.data_dir, self.uploads_dir, self.outputs_dir):
             d.mkdir(parents=True, exist_ok=True)

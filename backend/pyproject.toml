@@ -17,6 +17,9 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "python-docx>=1.1",
     "langdetect>=1.0.9",
+    # Postgres driver for cloud deploys (Supabase). SQLAlchemy uses it via
+    # the postgresql+psycopg:// URL scheme wired up in app/db.py.
+    "psycopg[binary]>=3.2",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +31,11 @@ dev = [
 sentry = [
     "sentry-sdk[fastapi]>=2.0",
 ]
+
+[tool.setuptools]
+# Pin the package list so setuptools doesn't try to treat runtime-data dirs
+# (jobs/, uploads/, outputs/) as Python packages. Bit me when adding psycopg.
+packages = ["app"]
 
 [tool.ruff]
 line-length = 100

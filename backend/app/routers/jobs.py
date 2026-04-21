@@ -19,6 +19,7 @@ from app.services.analyzer import ADAPTER_PROFILES, chunk_document, estimate
 from app.services.assemble import ASSEMBLERS
 from app.services.glossary import extract_terms
 from app.services.ingest import ingest as ingest_document
+from app.services.storage import get_storage
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -83,15 +84,16 @@ def analyze_job(job_id: int, session: Session = Depends(get_session)) -> dict:
     if not doc:
         raise HTTPException(status_code=404, detail="document missing")
 
-    stored = Path(doc.stored_path)
-    if not stored.exists():
-        raise HTTPException(status_code=410, detail="uploaded file no longer on disk")
+    storage = get_storage()
+    if not storage.exists(doc.stored_path):
+        raise HTTPException(status_code=410, detail="uploaded file no longer available")
 
     job.status = JobStatus.ANALYZING
     session.add(job)
     session.commit()
 
-    ingested = ingest_document(stored)
+    with storage.as_local_path(doc.stored_path) as local_path:
+        ingested = ingest_document(local_path)
     chunks = chunk_document(ingested, settings.chunk_tokens, settings.chunk_overlap)
     est = estimate(chunks, ingested.word_count, job.model_adapter)
 
@@ -258,11 +260,12 @@ def extract_glossary(
     doc = session.get(Document, job.document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="document missing")
-    stored = Path(doc.stored_path)
-    if not stored.exists():
-        raise HTTPException(status_code=410, detail="uploaded file no longer on disk")
+    storage = get_storage()
+    if not storage.exists(doc.stored_path):
+        raise HTTPException(status_code=410, detail="uploaded file no longer available")
 
-    ingested = ingest_document(stored)
+    with storage.as_local_path(doc.stored_path) as local_path:
+        ingested = ingest_document(local_path)
     extracted = extract_terms(
         ingested.full_text,
         top_n=top_n,
