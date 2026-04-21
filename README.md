@@ -8,52 +8,44 @@ LATAM-first: Spanish variant picker (es-AR rioplatense, es-MX, es-ES, es-US, etc
 - **Frontend**: Next.js 16 + Tailwind v4 — `frontend/`, port `:3838`
 - **Inference**: `llama-server` on `:8080` with TranslateGemma 4B Q4_K_M (~2.6 GB)
 
-## Prereqs
+## Install
 
-### macOS
+Full step-by-step walkthroughs are in **[INSTALL.md](./INSTALL.md)** — pick macOS (Apple Silicon), Linux + NVIDIA, or Linux CPU/AMD. Quick summary below.
+
+### macOS (Apple Silicon)
 
 ```bash
 brew install llama.cpp node pnpm
-curl -LsSf https://astral.sh/uv/install.sh | sh    # uv (Python package manager)
-```
-
-Metal (GPU) inference works out of the box on any Apple Silicon Mac.
-
-### Linux
-
-```bash
-# Python toolchain
 curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Node + pnpm
-sudo apt install -y nodejs     # or: dnf install -y nodejs  /  pacman -S nodejs
-npm i -g pnpm
-
-# llama.cpp — build with CUDA (NVIDIA) or ROCm (AMD) for GPU, or CPU-only
-git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
-cmake -B build -DGGML_CUDA=ON              # NVIDIA
-# cmake -B build -DGGML_HIP=ON             # AMD ROCm
-# cmake -B build                            # CPU-only
-cmake --build build -j
-export PATH="$PWD/build/bin:$PATH"          # add to ~/.bashrc to persist
-cd ..
-```
-
-Precompiled Linux binaries (CPU + various GPU backends) are also published at [github.com/ggml-org/llama.cpp/releases](https://github.com/ggml-org/llama.cpp/releases) — unpack and put `llama-server` on `$PATH`.
-
-**GPU tip:** on A10/A40-class NVIDIA cards, bump to the 12B Q4_K_M GGUF for better quality — edit `dev.sh` and change `-hf mradermacher/translategemma-4b-it-GGUF:Q4_K_M` to `…/translategemma-12b-it-GGUF:Q4_K_M`.
-
-**CPU-only:** edit `dev.sh` and set `--n-gpu-layers 0`. Expect ~5–10× slower tokens/sec — fine for testing, painful for books.
-
-## First-time setup
-
-```bash
-git clone git@github.com:vortex-303/babel.git
-cd babel
+git clone git@github.com:vortex-303/babel.git && cd babel
 ./setup.sh
 ```
 
-`setup.sh` creates the backend venv (`backend/.venv`), installs Python deps via `uv`, installs frontend deps with `pnpm`, and creates the runtime directories.
+Metal GPU acceleration works out of the box.
+
+### Linux (Ubuntu 24.04 + NVIDIA)
+
+```bash
+# Verify driver 570+ and CUDA 12.8+
+nvidia-smi
+
+# Grab prebuilt CUDA llama.cpp (see INSTALL.md for latest b-tag)
+curl -LO https://github.com/ggml-org/llama.cpp/releases/download/bXXXX/llama-bXXXX-bin-ubuntu-cuda-13.1-x64.zip
+unzip llama-bXXXX-bin-ubuntu-cuda-13.1-x64.zip -d ~/bin/llama.cpp
+echo 'export PATH="$HOME/bin/llama.cpp/build/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+
+# Node + pnpm + uv
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt install -y nodejs
+sudo npm install -g pnpm
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+git clone git@github.com:vortex-303/babel.git && cd babel
+./setup.sh
+```
+
+No cmake/build toolchain required — the prebuilt binary is ~100 MB.
+
+**Other setups** (CPU-only, AMD ROCm, older Ubuntu, custom GPU tiers) — see [INSTALL.md](./INSTALL.md).
 
 ## Run everything
 
