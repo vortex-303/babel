@@ -10,6 +10,10 @@ class TranslationRequest:
     source_lang: str
     target_lang: str
     context: str | None = None
+    # Optional term glossary: [(source_term, target_term), ...] the model
+    # must preserve exactly. Filtered per-chunk by the orchestrator so we
+    # don't bloat prompts with entries that never appear.
+    glossary: list[tuple[str, str]] | None = None
 
 
 @dataclass

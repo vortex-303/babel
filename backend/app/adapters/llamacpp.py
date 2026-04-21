@@ -101,7 +101,13 @@ def _language_name(code: str) -> str:
     return _LANG_NAMES.get(base, code)
 
 
-def build_prompt(source: str, target: str, text: str) -> str:
+def build_prompt(
+    source: str,
+    target: str,
+    text: str,
+    *,
+    glossary: list[tuple[str, str]] | None = None,
+) -> str:
     """Render a TranslateGemma-compatible prompt for the /completion endpoint.
 
     Matches the model's embedded Jinja chat template byte-for-byte (minus the
@@ -112,6 +118,17 @@ def build_prompt(source: str, target: str, text: str) -> str:
     tgt_name = _language_name(tgt_code)
     variant_hint = _VARIANT_HINTS.get(tgt_code, "")
 
+    glossary_clause = ""
+    if glossary:
+        # Inline as a bulleted list. Keeping the clause inside the same user
+        # turn avoids breaking TranslateGemma's embedded template structure.
+        lines = "\n".join(f"- {src} → {tgt}" for src, tgt in glossary)
+        glossary_clause = (
+            f"\nUse exactly these translations for the following terms, "
+            f"keeping them consistent and never altering spelling or case:\n"
+            f"{lines}\n"
+        )
+
     return (
         "<start_of_turn>user\n"
         f"You are a professional {src_name} ({src_code}) to {tgt_name} "
@@ -119,6 +136,7 @@ def build_prompt(source: str, target: str, text: str) -> str:
         f"convey the meaning and nuances of the original {src_name} text "
         f"while adhering to {tgt_name} grammar, vocabulary, and cultural "
         "sensitivities.\n"
+        f"{glossary_clause}"
         f"Produce only the {tgt_name} translation, without any additional "
         f"explanations or commentary. Please translate the following "
         f"{src_name} text into {tgt_name}:\n\n\n"
@@ -165,7 +183,12 @@ class LlamaCppAdapter(TranslationAdapter):
             return False
 
     async def translate(self, req: TranslationRequest) -> TranslationResult:
-        prompt = build_prompt(req.source_lang, req.target_lang, req.text)
+        prompt = build_prompt(
+            req.source_lang,
+            req.target_lang,
+            req.text,
+            glossary=req.glossary,
+        )
 
         payload = {
             "prompt": prompt,

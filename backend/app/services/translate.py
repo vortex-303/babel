@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlmodel import Session, select
 
 from app.adapters import TranslationAdapter, TranslationRequest
-from app.models import Chunk, Job, JobStatus
+from app.models import Chunk, GlossaryTerm, Job, JobStatus
 
 
 SessionFactory = Callable[[], Session]
@@ -45,6 +45,17 @@ async def translate_job(
                 select(Chunk).where(Chunk.job_id == job_id).order_by(Chunk.idx)
             ).all()
         ]
+        # Glossary once per job — it doesn't change mid-run. Only include
+        # entries that have a target_term set by the user (or defaulted).
+        glossary_all: list[tuple[str, str]] = [
+            (g.source_term, g.target_term)
+            for g in session.exec(
+                select(GlossaryTerm)
+                .where(GlossaryTerm.job_id == job_id)
+                .where(GlossaryTerm.target_term.is_not(None))
+                .where(GlossaryTerm.target_term != "")
+            ).all()
+        ]
 
     prev_translated: str | None = None
     for chunk_id in chunk_ids:
@@ -65,6 +76,14 @@ async def translate_job(
             else None
         )
 
+        # Keep the prompt compact by filtering the glossary to terms that
+        # actually appear in this chunk's source text.
+        chunk_glossary = (
+            [(src, tgt) for src, tgt in glossary_all if src in source_text]
+            if glossary_all
+            else None
+        ) or None
+
         try:
             result = await adapter.translate(
                 TranslationRequest(
@@ -72,6 +91,7 @@ async def translate_job(
                     source_lang=source,
                     target_lang=target,
                     context=context,
+                    glossary=chunk_glossary,
                 )
             )
         except Exception as e:

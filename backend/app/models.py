@@ -71,7 +71,10 @@ class GlossaryTerm(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     job_id: int = Field(foreign_key="job.id", index=True)
     source_term: str
-    target_term: str
+    # target_term is None right after extraction, filled in by user (or
+    # eventually by an auto-translate pass) before the glossary is injected
+    # into translation prompts.
+    target_term: Optional[str] = None
     notes: Optional[str] = None
     locked: bool = Field(default=True)
     occurrences: int = 0

@@ -14,10 +14,12 @@ export default function LandingPage() {
       {/* ===== Header ===== */}
       <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-black/80 backdrop-blur sticky top-0 z-20">
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-          <Link href="/" className="text-lg font-bold tracking-tight">
-            <span className="text-emerald-600">babel</span>
-            <span className="text-zinc-400">.</span>
-            <span className="text-zinc-500 text-sm font-normal">tower</span>
+          <Link
+            href="/"
+            className="flex items-center gap-2 text-lg font-bold tracking-tight"
+          >
+            <TowerIcon className="w-5 h-5 text-emerald-600" />
+            <span>babel</span>
           </Link>
           <nav className="hidden md:flex items-center gap-6 text-sm">
             <a
@@ -96,7 +98,7 @@ export default function LandingPage() {
               "No page caps",
               "Glossary review",
               "es-AR · es-MX · es-ES",
-              "Runs on your GPU",
+              "Consistent names across chapters",
             ].map((claim) => (
               <span key={claim} className="flex items-center gap-1.5">
                 <svg
@@ -192,8 +194,8 @@ export default function LandingPage() {
               b: "Drop a DOCX with headings, get a DOCX back. EPUBs preserve chapters. Markdown in, Markdown out.",
             },
             {
-              t: "Local or cloud, your call",
-              b: "Run on our GPU while it's free, or plug in your own llama.cpp / OpenRouter key. Your text never touches a training set.",
+              t: "Your text stays yours",
+              b: "Dedicated infrastructure. No retraining, no third-party LLM APIs unless you opt in. Source and output files are deleted after the retention window.",
             },
             {
               t: "Priced for LATAM",
@@ -317,10 +319,9 @@ export default function LandingPage() {
       {/* ===== Footer ===== */}
       <footer className="border-t border-zinc-200 dark:border-zinc-800 py-10">
         <div className="max-w-6xl mx-auto px-6 flex flex-wrap items-center justify-between gap-4">
-          <div className="text-sm">
-            <span className="font-bold">
-              <span className="text-emerald-600">babel</span>tower
-            </span>{" "}
+          <div className="flex items-center gap-2 text-sm">
+            <TowerIcon className="w-4 h-4 text-emerald-600" />
+            <span className="font-bold">babel</span>
             <span className="text-zinc-500">— long-document translation for LATAM</span>
           </div>
           <div className="flex items-center gap-5 text-xs text-zinc-500">
@@ -335,5 +336,30 @@ export default function LandingPage() {
         </div>
       </footer>
     </div>
+  );
+}
+
+function TowerIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      {/* Ziggurat / tiered Babel tower — five stacked tiers + flag */}
+      <path d="M12 2v2" />
+      <path d="M10 4h4v2h-4z" />
+      <path d="M8 6h8v3h-8z" />
+      <path d="M6 9h12v3h-12z" />
+      <path d="M4 12h16v3h-16z" />
+      <path d="M3 15h18v5h-18z" />
+      <path d="M3 20h18" />
+    </svg>
   );
 }
