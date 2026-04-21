@@ -32,7 +32,15 @@ class ClaimedJob:
 
 class BackendClient:
     def __init__(self, backend_url: str, worker_token: str, timeout: float = 60.0):
-        self._base = backend_url.rstrip("/") + "/api"
+        # `backend_url` should point at the FastAPI root. When pointing
+        # directly at Fly (api.babeltower.lat) that's just the bare URL.
+        # Only prepend the /api prefix if the user pointed us at Vercel
+        # (babeltower.lat, which rewrites /api/* → Fly). Detection: look for
+        # the api.* subdomain; anything else gets the /api prefix.
+        base = backend_url.rstrip("/")
+        if "://api." not in base:
+            base = base + "/api"
+        self._base = base
         self._headers = {"Authorization": f"Bearer {worker_token}"}
         self._client = httpx.Client(timeout=timeout, headers=self._headers)
 
