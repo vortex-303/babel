@@ -1,15 +1,80 @@
-# Tunnel guide — expose your local llama-server to the public backend
+# Tunnel guide — expose your local machine to the public backend
 
-When babel is deployed somewhere public (Vercel frontend + a hosted backend),
-the backend still needs a way to call your machine's `llama-server`. The
-machine is behind NAT and won't accept inbound connections directly, so we
-use an outbound-initiated tunnel.
+When babel is deployed publicly (Vercel frontend), the hosted frontend still
+needs a way to reach the babel backend running on your home/office machine.
+The machine is behind NAT and won't accept inbound connections directly, so
+we use an outbound-initiated tunnel.
 
-Recommended: **cloudflared quick tunnel** — free, no signup, 5 minutes.
-For a stable `tunnel.babeltower.lat` URL, use a **cloudflared named tunnel**
-(also free, requires a Cloudflare account).
+Two paths, pick one:
 
-Works identically on macOS and Linux.
+- **Option A — Tailscale Funnel** (free, 1 account, no DNS transfer required).
+  Use if you don't want to move DNS to Cloudflare, or if you already use
+  Tailscale. See `scripts/tunnel-tailscale.sh` and the [Tailscale Funnel](#tailscale-funnel) section below.
+
+- **Option B — Cloudflare tunnel** (free, 1 account, requires your domain's
+  DNS to be on Cloudflare). Use if you want a custom subdomain like
+  `api.babeltower.lat`. See `scripts/tunnel-setup.sh` and the [Cloudflare named tunnel](#cloudflare-named-tunnel) section below.
+
+Both work identically well on macOS and Linux.
+
+## Tailscale Funnel
+
+One-time setup: **5 minutes, one free Tailscale account**. Gives you a stable
+public HTTPS URL like `https://your-box.tailXYZ.ts.net`. DNS stays on Vercel.
+
+```bash
+./scripts/tunnel-tailscale.sh
+```
+
+That script installs Tailscale, authenticates (browser), and exposes
+`localhost:8765` publicly with a Tailscale-issued cert. At the end it prints
+the URL and the Vercel env command to wire it up:
+
+```bash
+vercel env rm NEXT_PUBLIC_BABEL_BACKEND production
+echo "https://your-box.tailXYZ.ts.net" | vercel env add NEXT_PUBLIC_BABEL_BACKEND production
+vercel --prod
+```
+
+**If Funnel refuses to enable** with "not authorized" / "attr:funnel": open
+the [Tailscale admin ACL editor](https://login.tailscale.com/admin/acls) and
+add Funnel to your policy:
+
+```json
+"nodeAttrs": [
+  { "target": ["autogroup:admin"], "attr": ["funnel"] }
+]
+```
+
+Save, re-run the script. One-time per tailnet.
+
+**Limits on the free tier:**
+- 1 TB/month of Funnel bandwidth (plenty for a beta).
+- URL is `*.ts.net` — no custom domain. If you want `api.babeltower.lat`
+  specifically, you'd need to put a reverse proxy with its own cert in
+  front, which negates most of the simplicity. For a beta, the `.ts.net`
+  URL as the API endpoint is fine — users never see it (the UI at
+  `babeltower.lat` just proxies through it server-side).
+
+**Stop exposing the port later:**
+
+```bash
+sudo tailscale funnel --bg 8765 off
+```
+
+---
+
+## Cloudflare named tunnel
+
+Recommended when you want `api.babeltower.lat` (a subdomain of your own
+domain) as the API endpoint. Requires:
+
+- A free Cloudflare account (for the tunnel credentials).
+- Your domain's DNS moved to Cloudflare nameservers — Vercel stays as the
+  registrar, but Cloudflare becomes the DNS host. See the [DNS-move section](#moving-dns-from-vercel-to-cloudflare) below.
+
+Most of the setup is automated by `scripts/tunnel-setup.sh`; the raw steps
+below are for reference or debugging.
 
 ---
 
@@ -210,3 +275,47 @@ If translations fail with `ConnectError: name or service not known`:
 If translations fail with `httpx.ReadTimeout`:
 - `llama-server` is swamped; check queue depth in the admin panel and
   reduce concurrency or scale to a bigger model host.
+
+---
+
+## Moving DNS from Vercel to Cloudflare
+
+If `babeltower.lat` is registered at Vercel but you want Cloudflare-tunnel
+automation, move only the **nameservers** (Vercel stays as registrar, you
+keep billing there):
+
+1. Sign up free at https://dash.cloudflare.com/sign-up.
+2. Dashboard → **Add Site** → `babeltower.lat` → pick Free plan.
+3. Cloudflare scans your existing DNS records and imports them (your Vercel
+   A/CNAME records stay, pointing at Vercel's edge).
+4. Cloudflare shows 2 nameservers, e.g. `ava.ns.cloudflare.com` and
+   `rick.ns.cloudflare.com`.
+5. Vercel dashboard → Domains → `babeltower.lat` → **Nameservers** → paste
+   Cloudflare's two.
+6. Wait 5–60 min. `babeltower.lat` keeps serving from Vercel the whole time
+   because the A record didn't change, only who publishes it.
+
+Once Cloudflare is authoritative, `scripts/tunnel-setup.sh` can auto-create
+`api.babeltower.lat` via `cloudflared tunnel route dns`.
+
+If you can't move the nameservers for some reason, there's a fallback: run
+the tunnel setup anyway, ignore the `route dns` error, and manually add a
+CNAME in Vercel's DNS pointing `api.babeltower.lat` → `<tunnel-uuid>.cfargotunnel.com`.
+
+---
+
+## Which one should I pick?
+
+| | Tailscale Funnel | Cloudflare tunnel |
+|---|---|---|
+| New account | Tailscale (free) | Cloudflare (free) |
+| DNS move required | No | Yes (to Cloudflare) |
+| URL | `*.ts.net` | Your own subdomain |
+| Cert | Tailscale | Let's Encrypt via Cloudflare |
+| Setup time | 5 min | 10 min (including DNS) |
+| Bandwidth cap (free) | 1 TB/mo | None advertised |
+| Best for | Fast starts, private infra, don't want to touch DNS | Production-looking setup with custom subdomain |
+
+For a babel beta where you want the fastest path to "my friend can hit the
+URL": **Tailscale Funnel**. Revisit Cloudflare later when you want the
+`api.babeltower.lat` polish.

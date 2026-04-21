@@ -22,9 +22,17 @@ cd babel
 #    cloudflared, Python venv). Idempotent — safe to re-run.
 ./scripts/bootstrap-ubuntu.sh
 
-# 3. Set your admin code, then set up the public tunnel
+# 3. Set your admin code
 $EDITOR .env                           # set BABEL_ADMIN_CODE=pancho41
-./scripts/tunnel-setup.sh              # one-time; prompts for browser login
+
+# 3a. Pick ONE tunnel option:
+
+# Option A — Tailscale Funnel (no Cloudflare, free, *.ts.net URL):
+./scripts/tunnel-tailscale.sh
+
+# Option B — Cloudflare named tunnel (free, custom api.* subdomain,
+# requires DNS at Cloudflare — see TUNNEL.md):
+./scripts/tunnel-setup.sh
 
 # 4. Start serving
 ./scripts/serve.sh                     # foreground; Ctrl+C stops everything
@@ -58,13 +66,32 @@ Env overrides:
 LLAMACPP_RELEASE_TAG=b8864 CUDA_VARIANT=12.4 ./scripts/bootstrap-ubuntu.sh
 ```
 
-### `tunnel-setup.sh`
+### `tunnel-tailscale.sh` (easiest, no Cloudflare)
+
+- Installs Tailscale (`curl | sh` from tailscale.com).
+- Authenticates with Tailscale (opens a browser URL — works from a headless
+  box too, you just open the URL on your laptop).
+- Enables Funnel on port 8765, which gives you a stable HTTPS URL at
+  `https://<hostname>.<tailnet>.ts.net` with a Tailscale-issued cert.
+- Prints the Vercel env commands to wire the tunnel into babeltower.lat.
+
+One-time ACL tweak may be needed in your Tailscale admin console the first
+time — the script tells you exactly what to paste. After that it's
+zero-maintenance.
+
+Port override:
+```bash
+PORT=8765 ./scripts/tunnel-tailscale.sh
+```
+
+### `tunnel-setup.sh` (Cloudflare, custom subdomain)
 
 - Logs in to Cloudflare (opens a browser; one-time).
 - Creates a tunnel named `babel` if it doesn't exist.
 - Writes `~/.cloudflared/config.yml` mapping `api.babeltower.lat` →
   `http://127.0.0.1:8765`.
-- Runs `cloudflared tunnel route dns` to point the hostname at the tunnel.
+- Runs `cloudflared tunnel route dns` to point the hostname at the tunnel
+  (requires the domain's DNS to be on Cloudflare — see TUNNEL.md).
 - Validates the config before exiting.
 
 To run cloudflared as a systemd service (starts on boot):
