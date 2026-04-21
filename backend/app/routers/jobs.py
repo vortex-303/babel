@@ -3,21 +3,22 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import delete
 from sqlmodel import Session, func, select
 
-from app.adapters import IMPLEMENTED_ADAPTERS, get_adapter
+from app.adapters import IMPLEMENTED_ADAPTERS
 from app.config import settings
-from app.db import get_session, new_session
+from app.db import get_session
+from app.deps import is_admin
 from app.models import Chunk, Document, GlossaryTerm, Job, JobStatus
+from app.services import queue as job_queue
 from app.services.analyzer import ADAPTER_PROFILES, chunk_document, estimate
 from app.services.assemble import ASSEMBLERS
 from app.services.glossary import extract_terms
 from app.services.ingest import ingest as ingest_document
-from app.services.translate import translate_job
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -149,11 +150,15 @@ def list_chunks(job_id: int, session: Session = Depends(get_session)) -> list[di
 
 
 @router.post("/{job_id}/translate")
-def start_translate(
+def enqueue_translate(
     job_id: int,
-    background: BackgroundTasks,
     session: Session = Depends(get_session),
+    admin: bool = Depends(is_admin),
 ) -> dict:
+    """Enqueue a job for translation. The queue worker picks it up and runs
+    one job at a time. In MANUAL mode non-admin submissions land in
+    PENDING_APPROVAL until an admin accepts. Admin submissions always go
+    straight to QUEUED regardless of mode."""
     job = session.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
@@ -163,7 +168,13 @@ def start_translate(
             detail=f"adapter {job.model_adapter!r} has no runtime yet; "
             + f"implemented: {sorted(IMPLEMENTED_ADAPTERS)}",
         )
-    if job.status in (JobStatus.TRANSLATING, JobStatus.REVIEWING, JobStatus.ASSEMBLING):
+    if job.status in (
+        JobStatus.QUEUED,
+        JobStatus.PENDING_APPROVAL,
+        JobStatus.TRANSLATING,
+        JobStatus.REVIEWING,
+        JobStatus.ASSEMBLING,
+    ):
         raise HTTPException(status_code=409, detail=f"job is {job.status.value}")
 
     chunk_count = session.exec(
@@ -172,17 +183,50 @@ def start_translate(
     if not chunk_count:
         raise HTTPException(status_code=400, detail="no chunks — call /analyze first")
 
-    adapter = get_adapter(job.model_adapter)
-    background.add_task(translate_job, job_id, adapter, new_session)
-
-    job.status = JobStatus.TRANSLATING
+    mode = job_queue.get_mode(settings.queue_mode)
+    needs_approval = mode == "manual" and not admin
+    job.status = JobStatus.PENDING_APPROVAL if needs_approval else JobStatus.QUEUED
+    job.queued_at = datetime.utcnow()
+    job.submitted_by_admin = admin
     job.error = None
     session.add(job)
     session.commit()
     session.refresh(job)
 
     doc = session.get(Document, job.document_id)
-    return _serialize_job(job, doc)
+    return {
+        **_serialize_job(job, doc),
+        "queue_mode": mode,
+        "queue_position": _queue_position(session, job),
+    }
+
+
+@router.get("/{job_id}/queue-position")
+def queue_position(job_id: int, session: Session = Depends(get_session)) -> dict:
+    job = session.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    return {
+        "id": job.id,
+        "status": job.status.value,
+        "position": _queue_position(session, job),
+    }
+
+
+def _queue_position(session: Session, job: Job) -> int | None:
+    """Return 1-indexed position in the active queue, or None if not queued."""
+    if job.status != JobStatus.QUEUED:
+        return None
+    ahead = session.exec(
+        select(func.count())
+        .select_from(Job)
+        .where(Job.status == JobStatus.QUEUED)
+        .where(
+            (Job.priority > job.priority)
+            | ((Job.priority == job.priority) & (Job.queued_at < job.queued_at))
+        )
+    ).one()
+    return int(ahead) + 1
 
 
 class GlossaryEntry(BaseModel):

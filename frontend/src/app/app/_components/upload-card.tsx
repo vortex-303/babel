@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 
+import { api } from "@/app/_lib/admin";
+
 type UploadResult = {
   id: number;
   filename: string;
@@ -28,13 +30,13 @@ export function UploadCard() {
       try {
         const body = new FormData();
         body.append("file", file);
-        const res = await fetch("/api/documents", { method: "POST", body });
+        const res = await api("/api/documents", { method: "POST", body });
         if (!res.ok) {
           const detail = await res.json().catch(() => ({ detail: res.statusText }));
           throw new Error(detail.detail ?? "upload failed");
         }
         const doc: UploadResult = await res.json();
-        router.push(`/documents/${doc.id}`);
+        router.push(`/app/documents/${doc.id}`);
       } catch (e) {
         setError(e instanceof Error ? e.message : "upload failed");
       } finally {

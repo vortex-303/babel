@@ -9,7 +9,8 @@ from sqlmodel import select
 from app.config import settings
 from app.db import init_db, new_session
 from app.models import Job, JobStatus
-from app.routers import documents, jobs
+from app.routers import admin, documents, jobs
+from app.services.queue import queue_loop
 from app.services.watchdog import watchdog_loop
 
 
@@ -29,24 +30,41 @@ def _mark_stale_translations_failed() -> None:
             session.commit()
 
 
+def _init_sentry_if_configured() -> None:
+    """Opt-in Sentry hookup. Stays silent when SENTRY_DSN isn't set."""
+    if not settings.sentry_dsn:
+        return
+    try:
+        import sentry_sdk
+    except ImportError:
+        return
+    sentry_sdk.init(dsn=settings.sentry_dsn, traces_sample_rate=0.1)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
     _mark_stale_translations_failed()
+    _init_sentry_if_configured()
     watchdog_task = asyncio.create_task(
         watchdog_loop(
             interval_seconds=settings.watchdog_interval_seconds,
             stuck_minutes=settings.watchdog_stuck_minutes,
         )
     )
+    queue_task = asyncio.create_task(
+        queue_loop(interval_seconds=settings.queue_interval_seconds)
+    )
     try:
         yield
     finally:
-        watchdog_task.cancel()
-        try:
-            await watchdog_task
-        except asyncio.CancelledError:
-            pass
+        for task in (watchdog_task, queue_task):
+            task.cancel()
+        for task in (watchdog_task, queue_task):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(title="babel", version="0.0.1", lifespan=lifespan)
@@ -60,6 +78,7 @@ app.add_middleware(
 
 app.include_router(documents.router)
 app.include_router(jobs.router)
+app.include_router(admin.router)
 
 
 @app.get("/health")

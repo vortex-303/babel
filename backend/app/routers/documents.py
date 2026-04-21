@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 
 from app.config import settings
 from app.db import get_session
+from app.deps import is_admin
 from app.models import Document
 from app.services import ingest as ingest_service
 from app.services.analyzer import count_tokens
@@ -27,6 +28,7 @@ def _safe_name(original: str) -> str:
 async def upload_document(
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
+    admin: bool = Depends(is_admin),
 ) -> dict:
     original = file.filename or "upload"
     suffix = Path(original).suffix.lower()
@@ -41,6 +43,19 @@ async def upload_document(
     stored_name = _safe_name(original)
     stored_path = settings.uploads_dir / stored_name
     data = await file.read()
+
+    # Non-admin upload size cap. Admins bypass (they're running the GPU).
+    if not admin:
+        limit_bytes = settings.max_upload_mb_nonadmin * 1024 * 1024
+        if len(data) > limit_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"file too large ({len(data) // (1024 * 1024)} MB); "
+                    f"non-admin limit is {settings.max_upload_mb_nonadmin} MB"
+                ),
+            )
+
     stored_path.write_bytes(data)
 
     try:
@@ -52,6 +67,17 @@ async def upload_document(
     word_count = ingested.word_count
     token_count = count_tokens(ingested.full_text)
     detected_lang, detected_conf = detect_language(ingested.full_text)
+
+    # Non-admin word-count cap — prevents users from queueing a 500k-word tome.
+    if not admin and word_count > settings.max_word_count_nonadmin:
+        stored_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"document too long ({word_count:,} words); non-admin "
+                f"limit is {settings.max_word_count_nonadmin:,} words"
+            ),
+        )
 
     doc = Document(
         filename=original,

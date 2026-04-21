@@ -45,7 +45,7 @@ export default async function DocumentPage({
         <div className="max-w-5xl mx-auto px-6 py-5 flex items-center justify-between">
           <div>
             <Link
-              href="/"
+              href="/app"
               className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
             >
               ← back

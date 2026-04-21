@@ -9,11 +9,14 @@ class JobStatus(str, Enum):
     UPLOADED = "uploaded"
     ANALYZING = "analyzing"
     AWAITING_GLOSSARY_REVIEW = "awaiting_glossary_review"
+    PENDING_APPROVAL = "pending_approval"
+    QUEUED = "queued"
     TRANSLATING = "translating"
     REVIEWING = "reviewing"
     ASSEMBLING = "assembling"
     DONE = "done"
     FAILED = "failed"
+    REJECTED = "rejected"
 
 
 class Document(SQLModel, table=True):
@@ -43,6 +46,11 @@ class Job(SQLModel, table=True):
     estimated_seconds: Optional[int] = None
     estimated_cost_usd: Optional[float] = None
     error: Optional[str] = None
+    # Queue metadata — used to order pending/queued jobs.
+    queued_at: Optional[datetime] = None
+    priority: int = 0  # higher priority runs first; 0 default
+    # Whether this job was submitted by an admin (bypasses approval gate).
+    submitted_by_admin: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None

@@ -7,6 +7,7 @@ import {
   PORTUGUESE_VARIANTS,
   SPANISH_VARIANTS,
 } from "@/app/_lib/languages";
+import { api } from "@/app/_lib/admin";
 
 type ChunkPreview = { idx: number; tokens: number; preview: string };
 
@@ -116,7 +117,7 @@ export function AnalyzePanel({
     setJobStatus(null);
     setChunks(null);
     try {
-      const jobRes = await fetch("/api/jobs", {
+      const jobRes = await api("/api/jobs", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -129,7 +130,7 @@ export function AnalyzePanel({
       if (!jobRes.ok) throw new Error(await errorText(jobRes));
       const job = await jobRes.json();
 
-      const analyzeRes = await fetch(`/api/jobs/${job.id}/analyze`, {
+      const analyzeRes = await api(`/api/jobs/${job.id}/analyze`, {
         method: "POST",
       });
       if (!analyzeRes.ok) throw new Error(await errorText(analyzeRes));
@@ -153,7 +154,7 @@ export function AnalyzePanel({
 
   const pollOnce = useCallback(async (jobId: number) => {
     try {
-      const res = await fetch(`/api/jobs/${jobId}`);
+      const res = await api(`/api/jobs/${jobId}`);
       if (!res.ok) throw new Error(await errorText(res));
       const data: JobStatus = await res.json();
       setJobStatus(data);
@@ -165,7 +166,7 @@ export function AnalyzePanel({
       // Lets the user watch translations land in real time, not just at the end.
       if (terminal || progressed) {
         lastTranslatedCount.current = data.translated_chunks;
-        const chunksRes = await fetch(`/api/jobs/${jobId}/chunks`);
+        const chunksRes = await api(`/api/jobs/${jobId}/chunks`);
         if (chunksRes.ok) {
           const cdata: JobChunk[] = await chunksRes.json();
           setChunks(cdata);
@@ -187,7 +188,7 @@ export function AnalyzePanel({
     setTranslateError(null);
     setChunks(null);
     try {
-      const res = await fetch(`/api/jobs/${result.id}/translate`, {
+      const res = await api(`/api/jobs/${result.id}/translate`, {
         method: "POST",
       });
       if (!res.ok) throw new Error(await errorText(res));
@@ -208,7 +209,7 @@ export function AnalyzePanel({
     setGlossaryBusy(true);
     setGlossaryError(null);
     try {
-      const res = await fetch(`/api/jobs/${result.id}/extract-glossary`, {
+      const res = await api(`/api/jobs/${result.id}/extract-glossary`, {
         method: "POST",
       });
       if (!res.ok) throw new Error(await errorText(res));
@@ -225,7 +226,7 @@ export function AnalyzePanel({
     setGlossaryBusy(true);
     setGlossaryError(null);
     try {
-      const res = await fetch(`/api/jobs/${result.id}/glossary`, {
+      const res = await api(`/api/jobs/${result.id}/glossary`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ entries: glossary }),
@@ -253,7 +254,7 @@ export function AnalyzePanel({
     setCancelBusy(true);
     setTranslateError(null);
     try {
-      const res = await fetch(`/api/jobs/${result.id}/cancel`, {
+      const res = await api(`/api/jobs/${result.id}/cancel`, {
         method: "POST",
       });
       if (!res.ok) throw new Error(await errorText(res));

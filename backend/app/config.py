@@ -36,6 +36,26 @@ class Settings(BaseSettings):
     watchdog_stuck_minutes: int = 10
     watchdog_interval_seconds: int = 60
 
+    # Admin gate — shared pass-code required on X-Admin-Code header to call
+    # any /admin/* route. Empty (default) disables admin endpoints entirely
+    # so a misconfigured deploy can't leak them.
+    admin_code: str = ""
+
+    # Queue — admin controls whether new jobs go straight to QUEUED or wait
+    # for manual admin approval.
+    queue_mode: str = "auto"  # "auto" | "manual"
+    # Time between queue-worker sweeps (picks next QUEUED job and runs it).
+    queue_interval_seconds: int = 3
+
+    # Non-admin limits.
+    max_upload_mb_nonadmin: int = 10
+    max_word_count_nonadmin: int = 80000  # ~ one 300-page book
+    # How long to keep documents/chunks before purge (admin-only purge for now).
+    retention_days: int = 7
+
+    # Optional Sentry DSN. If set, initialized in main.py lifespan.
+    sentry_dsn: str = ""
+
     def ensure_dirs(self) -> None:
         for d in (self.data_dir, self.uploads_dir, self.outputs_dir):
             d.mkdir(parents=True, exist_ok=True)
