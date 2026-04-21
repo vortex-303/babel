@@ -8,6 +8,8 @@ LATAM-first: Spanish variant picker (es-AR rioplatense, es-MX, es-ES, es-US, etc
 - **Frontend**: Next.js 16 + Tailwind v4 — `frontend/`, port `:3838`
 - **Inference**: `llama-server` on `:8080` with TranslateGemma 4B Q4_K_M (~2.6 GB)
 
+**Product roadmap + the "why":** see **[PLAN.md](./PLAN.md)** — ultimate goal, privacy story, pricing, open questions.
+
 ## Install
 
 Full step-by-step walkthroughs are in **[INSTALL.md](./INSTALL.md)** — pick macOS (Apple Silicon), Linux + NVIDIA, or Linux CPU/AMD. Quick summary below.
