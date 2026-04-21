@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import signal
 import socket
+import threading
 import time
 
 import httpx
@@ -19,6 +20,14 @@ log = logging.getLogger("babel_worker.loop")
 
 
 def _install_signals(controller: Controller) -> None:
+    # signal.signal() is main-thread-only on Python. When the loop runs
+    # under tray mode, pystray owns the main thread — we skip signal
+    # registration and rely on controller.stop() being called from the
+    # tray's Quit menu (or from launchd on machine shutdown).
+    if threading.current_thread() is not threading.main_thread():
+        log.debug("signal handler skipped — running in background thread")
+        return
+
     def handler(signum, _frame):
         log.info("signal %s — graceful shutdown after current chunk", signum)
         controller.stop()
@@ -140,13 +149,27 @@ def _run_job(
 
 
 def run(cfg: Config, controller: Controller | None = None) -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    # Configure logging only if nobody else has. Otherwise we'd duplicate
+    # messages when the tray launches the loop from a background thread.
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        )
     if controller is None:
         controller = Controller()
     _install_signals(controller)
+    # Wrap the real loop in a try/except so unhandled errors surface in the
+    # tray as an "error" phase instead of a silent thread death.
+    try:
+        _run_inner(cfg, controller)
+    except Exception as e:
+        log.exception("worker loop crashed")
+        controller.update(phase="error", last_error=f"{type(e).__name__}: {e}")
+        raise
+
+
+def _run_inner(cfg: Config, controller: Controller) -> None:
 
     llama = LlamaCppClient(cfg.llama_host, cfg.llama_port)
     if not llama.health():
