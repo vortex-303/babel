@@ -48,19 +48,41 @@ export default function DownloadPage() {
             Download babel · macOS (Apple Silicon)
           </a>
           <p className="mt-4 text-xs text-zinc-500">
-            ~150 MB · requires macOS 11 or later · open-source, unsigned build
+            ~50 MB · requires macOS 11+ · Apple Silicon · open-source, unsigned
+          </p>
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 p-6">
+          <p className="text-xs uppercase tracking-wide text-zinc-500 mb-2">
+            Or install with one command
+          </p>
+          <pre className="bg-zinc-950 text-zinc-100 rounded-lg p-4 text-sm font-mono overflow-x-auto">
+            <code>curl -fsSL https://babeltower.lat/install.sh | bash</code>
+          </pre>
+          <p className="mt-2 text-xs text-zinc-500">
+            Downloads babel.app into <code>/Applications</code> (or{" "}
+            <code>~/Applications</code> if you don't have write access),
+            clears the Gatekeeper quarantine, and opens the app. No clicks,
+            no right-click workaround needed.{" "}
+            <a
+              href="/install.sh"
+              className="underline hover:text-emerald-600"
+            >
+              Read the script first
+            </a>{" "}
+            if you want to know exactly what it does.
           </p>
         </div>
 
         <section className="mt-12 grid gap-4 md:grid-cols-3">
-          <Step n="1" title="Unzip + drag to Applications">
-            The download is a <code>.zip</code>. Unzip it and drag{" "}
-            <code>babel.app</code> into your <code>/Applications</code> folder.
+          <Step n="1" title="Install">
+            Pick the one-liner above, or download the zip and drag{" "}
+            <code>babel.app</code> into <code>/Applications</code>.
           </Step>
-          <Step n="2" title="Right-click → Open">
-            First launch only: right-click (or Control-click) <code>babel.app</code>{" "}
-            in Finder and choose <strong>Open</strong>. macOS asks once; click{" "}
-            <strong>Open</strong>. It's remembered forever.
+          <Step n="2" title="Open">
+            With the one-liner: nothing to do, the installer opens it for
+            you. With the zip: right-click <code>babel.app</code> →{" "}
+            <strong>Open</strong> (one-time Gatekeeper bypass).
           </Step>
           <Step n="3" title="Paste your access token">
             babel asks for your worker token (admin gives you this). Pasted,
