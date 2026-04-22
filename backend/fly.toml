@@ -11,9 +11,13 @@ primary_region = 'iad'
 [http_service]
   internal_port = 8765
   force_https = true
+  # Keep at least one machine always running. The worker streams chunk
+  # uploads over tens of minutes to hours — an auto-stop mid-run yields a
+  # 502 on the worker side and fails the whole translation. At 1 GB RAM
+  # shared-cpu-1x this still fits comfortably in the Fly free tier.
   auto_stop_machines = 'stop'
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   processes = ['app']
 
 [[vm]]
