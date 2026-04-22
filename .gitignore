@@ -51,3 +51,5 @@ Thumbs.db
 # Supabase CLI scratch state
 supabase/.temp/
 supabase/.branches/
+.vercel
+packaging/mac/build/

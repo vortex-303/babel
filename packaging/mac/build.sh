@@ -74,11 +74,12 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_TAG/llama-$LLAMA_TAG-bin-$LLAMA_ARCH.tar.gz"
 curl -fsSL "$LLAMA_URL" | tar -xz -C "$TMP/"
-LLAMA_BIN_SRC=""
-for candidate in "$TMP/build/bin" "$TMP/bin" "$TMP"; do
-  if [ -x "$candidate/llama-server" ]; then LLAMA_BIN_SRC="$candidate"; break; fi
-done
-[ -n "$LLAMA_BIN_SRC" ] || die "llama-server not found inside llama.cpp archive"
+# Archive layout varies by platform: macOS has everything flat under
+# `llama-b<tag>/`, Linux has `build/bin/`. Find llama-server wherever it is.
+LLAMA_BIN=$(find "$TMP" -name "llama-server" -type f 2>/dev/null | head -1)
+[ -n "$LLAMA_BIN" ] && [ -x "$LLAMA_BIN" ] \
+  || die "llama-server not found inside llama.cpp archive"
+LLAMA_BIN_SRC="$(dirname "$LLAMA_BIN")"
 mkdir -p "$APP/Contents/Resources/llama/bin"
 cp -a "$LLAMA_BIN_SRC/"* "$APP/Contents/Resources/llama/bin/"
 
