@@ -135,7 +135,8 @@ What's needed to be genuinely superior:
 | A | Supabase Postgres + Storage | ✅ shipped 2026-04-21 |
 | B | Fly.io backend at api.babeltower.lat | ✅ shipped 2026-04-21 |
 | C | Pull-worker (CLI) with installer for Mac + Linux | ✅ shipped 2026-04-21 |
-| **D** | **`babel.app` — unsigned Mac bundle, download-and-run** | **next** |
+| **D0** | **Slim tenancy — session-ID cookie, file isolation, admin sees all** | **next** |
+| D | `babel.app` — unsigned Mac bundle, download-and-run | |
 | E | Accounts (magic-link auth) + credit ledger in Postgres | |
 | F | Stripe integration — purchase + balance display | |
 | G | End-to-end encryption + contributor mode + Stripe Connect payouts | |
@@ -143,7 +144,15 @@ What's needed to be genuinely superior:
 | I | Format-fidelity upgrade (headings, italics, footnotes) | |
 | J | Model tiering (4B / 12B / 27B + cloud fallback) | |
 
-Each phase is one commit boundary, not one day. D alone is ~1 week of focused work.
+Each phase is one commit boundary, not one day. D alone is ~1 week of focused work; D0 is ~1 day and unblocks sharing the babeltower.lat URL with anyone.
+
+### Phase D0 — slim tenancy
+
+- Frontend generates a UUID on first visit, stores in `localStorage` as `babel:session-id`. Attaches as `X-Session-ID` header on every backend call (same pattern as the admin-code header).
+- Backend adds `owner_id TEXT` column on `Document`. FastAPI dependency `get_owner_id` returns the session UUID for a regular request, or the sentinel `"*"` for admin (= "see all").
+- Every document/job read filters `WHERE owner_id = ?` when non-admin; writes stamp `owner_id` on insert. Deletes + downloads check ownership → 404 otherwise.
+- Admin panel queue gains an **Owner** column so you can see whose work you're approving.
+- Clean upgrade path to Phase E: when a user enters an email in the magic-link flow, their existing `owner_id` sessions attach to the new `user_id` in one SQL UPDATE. Zero file loss.
 
 ---
 
