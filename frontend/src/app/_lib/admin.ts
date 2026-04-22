@@ -3,6 +3,7 @@
 // gracefully if the user's browser doesn't have localStorage (SSR, Safari
 // private mode under some configs).
 
+import { getPasskeyToken } from "./passkey";
 import { getSessionId } from "./session";
 import { getSupabase } from "./supabase";
 
@@ -44,13 +45,20 @@ export async function api(input: string, init?: RequestInit): Promise<Response> 
   if (sessionId) headers.set("X-Session-ID", sessionId);
   for (const [k, v] of Object.entries(adminHeaders())) headers.set(k, v);
 
-  const sb = getSupabase();
-  if (sb) {
-    const {
-      data: { session },
-    } = await sb.auth.getSession();
-    if (session?.access_token) {
-      headers.set("Authorization", `Bearer ${session.access_token}`);
+  // Passkey token wins if present — it's our own JWT, doesn't require
+  // Supabase to be configured, and survives across sessions.
+  const passkeyToken = getPasskeyToken();
+  if (passkeyToken) {
+    headers.set("Authorization", `Bearer ${passkeyToken}`);
+  } else {
+    const sb = getSupabase();
+    if (sb) {
+      const {
+        data: { session },
+      } = await sb.auth.getSession();
+      if (session?.access_token) {
+        headers.set("Authorization", `Bearer ${session.access_token}`);
+      }
     }
   }
 

@@ -11,9 +11,10 @@ import {
   signUpWithPassword,
   useAuth,
 } from "@/app/_lib/auth";
+import { registerPasskey, signInWithPasskey } from "@/app/_lib/passkey";
 import { isAuthConfigured } from "@/app/_lib/supabase";
 
-type Mode = "menu" | "signin" | "signup" | "admin";
+type Mode = "menu" | "signin" | "signup" | "admin" | "passkey-signup";
 
 export function UserMenu() {
   const [open, setOpen] = useState(false);
@@ -27,8 +28,8 @@ export function UserMenu() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const { session, profile } = useAuth();
-  const signedIn = !!session;
+  const { profile, auth, refreshProfile } = useAuth();
+  const signedIn = auth.signedIn;
   const isAdmin = !!code;
   const authAvailable = isAuthConfigured();
 
@@ -79,12 +80,53 @@ export function UserMenu() {
     }
     setBusy(true);
     try {
-      await signUpWithPassword(email.trim(), password);
-      setMessage(
-        `Verification email sent to ${email}. Click the link, then come back and sign in.`,
-      );
-      setMode("signin");
-      setPassword("");
+      const { signedIn } = await signUpWithPassword(email.trim(), password);
+      if (signedIn) {
+        // "Confirm email" is OFF in Supabase — user has a session already.
+        setOpen(false);
+        setMode("menu");
+        resetAuthForm();
+      } else {
+        setMessage(
+          `Verification email sent to ${email}. Click the link, then come back and sign in.`,
+        );
+        setMode("signin");
+        setPassword("");
+      }
+    } catch (e) {
+      setError(friendlyAuthError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitPasskeyRegister = async () => {
+    setError(null);
+    setMessage(null);
+    setBusy(true);
+    try {
+      await registerPasskey(email.trim());
+      await refreshProfile();
+      setOpen(false);
+      setMode("menu");
+      resetAuthForm();
+    } catch (e) {
+      setError(friendlyAuthError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitPasskeySignIn = async () => {
+    setError(null);
+    setMessage(null);
+    setBusy(true);
+    try {
+      await signInWithPasskey();
+      await refreshProfile();
+      setOpen(false);
+      setMode("menu");
+      resetAuthForm();
     } catch (e) {
       setError(friendlyAuthError(e));
     } finally {
@@ -143,7 +185,7 @@ export function UserMenu() {
   const pillLabel = isAdmin
     ? "Admin"
     : signedIn
-      ? (profile?.email ?? session?.user?.email ?? "Signed in")
+      ? (auth.displayEmail ?? "Signed in")
       : "Sign in";
   const pillTone = isAdmin
     ? "bg-emerald-600/10 text-emerald-700 dark:text-emerald-300 border-emerald-600/30"
@@ -190,28 +232,61 @@ export function UserMenu() {
                   </Link>
                 </div>
               )}
-              {!signedIn && authAvailable && (
+              {!signedIn && (
                 <>
                   <button
                     type="button"
-                    onClick={() => {
-                      setMode("signin");
-                      resetAuthForm();
-                    }}
-                    className="block w-full text-left py-1.5 px-2 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-900"
+                    onClick={() => void submitPasskeySignIn()}
+                    disabled={busy}
+                    className="block w-full text-left py-1.5 px-2 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-900 disabled:opacity-50"
                   >
-                    Sign in
+                    <span className="mr-2">🔑</span>Sign in with passkey
                   </button>
                   <button
                     type="button"
                     onClick={() => {
-                      setMode("signup");
+                      setMode("passkey-signup");
                       resetAuthForm();
                     }}
                     className="block w-full text-left py-1.5 px-2 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-900"
                   >
-                    Create account
+                    <span className="mr-2">🔐</span>Create passkey account
                   </button>
+                  {busy && !error && (
+                    <p className="text-[11px] text-zinc-500 px-2 py-1">
+                      Waiting for passkey…
+                    </p>
+                  )}
+                  {error && (
+                    <p className="text-[11px] text-red-600 dark:text-red-400 px-2 py-1">
+                      {error}
+                    </p>
+                  )}
+                  {authAvailable && (
+                    <>
+                      <div className="my-1 border-t border-zinc-200 dark:border-zinc-800" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMode("signin");
+                          resetAuthForm();
+                        }}
+                        className="block w-full text-left py-1.5 px-2 rounded-md text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+                      >
+                        Sign in with email + password
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMode("signup");
+                          resetAuthForm();
+                        }}
+                        className="block w-full text-left py-1.5 px-2 rounded-md text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+                      >
+                        Create email account
+                      </button>
+                    </>
+                  )}
                 </>
               )}
               {!isAdmin && (
@@ -335,6 +410,47 @@ export function UserMenu() {
                   resetAuthForm();
                 }}
                 className="w-full py-1 rounded-md text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+              >
+                Cancel
+              </button>
+            </>
+          )}
+
+          {mode === "passkey-signup" && (
+            <>
+              <p className="text-xs text-zinc-500 mb-2">
+                Enter an email as your account label. Your device will create a
+                passkey — no password, no email sent.
+              </p>
+              <input
+                type="email"
+                value={email}
+                autoComplete="email"
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void submitPasskeyRegister();
+                }}
+                placeholder="you@example.com"
+                className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-transparent px-2 py-1.5 mb-2 text-sm"
+              />
+              {error && (
+                <p className="text-xs text-red-600 dark:text-red-400 mb-2">{error}</p>
+              )}
+              <button
+                type="button"
+                disabled={busy || !email}
+                onClick={() => void submitPasskeyRegister()}
+                className="w-full py-1.5 rounded-md bg-zinc-900 text-white text-xs font-medium disabled:opacity-50 dark:bg-white dark:text-black"
+              >
+                {busy ? "Waiting for passkey…" : "Create passkey"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("menu");
+                  resetAuthForm();
+                }}
+                className="w-full mt-1 py-1 rounded-md text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
               >
                 Cancel
               </button>

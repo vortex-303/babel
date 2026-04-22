@@ -100,6 +100,18 @@ class Settings(BaseSettings):
     stripe_success_url: str = "http://127.0.0.1:3838/app/billing?status=ok"
     stripe_cancel_url: str = "http://127.0.0.1:3838/app/billing?status=cancel"
 
+    # --- Passkey / WebAuthn ---
+    # Relying Party id = the domain passkeys are scoped to. Prod: babeltower.lat.
+    passkey_rp_id: str = "localhost"
+    # Origins allowed on registration/assertion — comma-separated so we can
+    # authorize apex + Vercel preview URLs together.
+    passkey_origin: str = "http://127.0.0.1:3838,http://localhost:3838"
+
+    # Separate secret used to sign babel-minted JWTs (passkey sessions).
+    # Rotating this doesn't invalidate Supabase tokens and vice versa.
+    # Falls back to supabase_jwt_secret if empty so local dev can stay slim.
+    babel_jwt_secret: str = ""
+
     def ensure_dirs(self) -> None:
         for d in (self.data_dir, self.uploads_dir, self.outputs_dir):
             d.mkdir(parents=True, exist_ok=True)

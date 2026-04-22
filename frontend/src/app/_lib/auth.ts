@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 
 import { api } from "./admin";
+import {
+  clearPasskey,
+  getPasskeyEmail,
+  getPasskeyToken,
+} from "./passkey";
 import { getSessionId } from "./session";
 import { getSupabase, type Session } from "./supabase";
 
@@ -13,27 +18,33 @@ export type Profile = {
   credits_used: number;
 };
 
-/** Tracks Supabase auth state + fetches the backend profile (credits). */
+export type AuthState = {
+  /** True when either Supabase session OR a passkey token is present. */
+  signedIn: boolean;
+  /** "passkey" | "supabase" | null — null before load, useful for UI. */
+  provider: "passkey" | "supabase" | null;
+  /** Human-readable identifier for the pill. */
+  displayEmail: string | null;
+};
+
+/** Tracks auth state across both Supabase and babel-passkey providers. */
 export function useAuth(): {
   session: Session | null;
   profile: Profile | null;
   loading: boolean;
+  auth: AuthState;
   refreshProfile: () => Promise<void>;
 } {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [passkeyEmail, setPasskeyEmail] = useState<string | null>(null);
 
   const refreshProfile = async () => {
-    const sb = getSupabase();
-    if (!sb) {
-      setProfile(null);
-      return;
-    }
-    const {
-      data: { session: s },
-    } = await sb.auth.getSession();
-    if (!s) {
+    // Either a passkey token or a Supabase session can drive the profile
+    // fetch — api() picks whichever is present as the Authorization header.
+    const hasAny = !!getPasskeyToken() || !!session;
+    if (!hasAny) {
       setProfile(null);
       return;
     }
@@ -46,54 +57,90 @@ export function useAuth(): {
   };
 
   useEffect(() => {
-    const sb = getSupabase();
-    if (!sb) {
-      setLoading(false);
-      return;
-    }
     let mounted = true;
+    const sb = getSupabase();
 
     void (async () => {
-      const {
-        data: { session: s },
-      } = await sb.auth.getSession();
-      if (!mounted) return;
-      setSession(s);
-      if (s) {
-        // Claim any guest docs the anon session created before login.
-        const gid = getSessionId();
-        if (gid && gid !== s.user.id) {
-          try {
-            await api("/api/documents/claim", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ session_id: gid }),
-            });
-          } catch {
-            /* ignore */
+      setPasskeyEmail(getPasskeyEmail());
+
+      if (sb) {
+        const {
+          data: { session: s },
+        } = await sb.auth.getSession();
+        if (mounted) setSession(s);
+        if (s) {
+          const gid = getSessionId();
+          if (gid && gid !== s.user.id) {
+            try {
+              await api("/api/documents/claim", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ session_id: gid }),
+              });
+            } catch {
+              /* ignore */
+            }
           }
         }
-        await refreshProfile();
       }
-      setLoading(false);
+
+      if (mounted) {
+        await refreshProfile();
+        setLoading(false);
+      }
     })();
 
-    const { data: sub } = sb.auth.onAuthStateChange(
-      (_event: string, s: Session | null) => {
-        if (!mounted) return;
-        setSession(s);
-        if (s) void refreshProfile();
-        else setProfile(null);
-      },
-    );
+    let unsub: (() => void) | null = null;
+    if (sb) {
+      const { data: sub } = sb.auth.onAuthStateChange(
+        (_event: string, s: Session | null) => {
+          if (!mounted) return;
+          setSession(s);
+          void refreshProfile();
+        },
+      );
+      unsub = () => sub.subscription.unsubscribe();
+    }
+
+    // Passkey token changes via localStorage events (other tabs) OR our own
+    // sign-in/out calls. Listen to storage + window focus so the pill stays
+    // accurate without a reload.
+    const onStorage = () => {
+      setPasskeyEmail(getPasskeyEmail());
+      void refreshProfile();
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", onStorage);
 
     return () => {
       mounted = false;
-      sub.subscription.unsubscribe();
+      unsub?.();
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onStorage);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { session, profile, loading, refreshProfile };
+  const auth: AuthState = (() => {
+    const hasPasskey = !!getPasskeyToken();
+    if (hasPasskey) {
+      return {
+        signedIn: true,
+        provider: "passkey",
+        displayEmail: passkeyEmail ?? profile?.email ?? null,
+      };
+    }
+    if (session) {
+      return {
+        signedIn: true,
+        provider: "supabase",
+        displayEmail: profile?.email ?? session.user.email ?? null,
+      };
+    }
+    return { signedIn: false, provider: null, displayEmail: null };
+  })();
+
+  return { session, profile, loading, auth, refreshProfile };
 }
 
 export async function signInWithPassword(
@@ -121,17 +168,21 @@ export async function signInWithPassword(
 export async function signUpWithPassword(
   email: string,
   password: string,
-): Promise<void> {
+): Promise<{ signedIn: boolean }> {
   const sb = getSupabase();
   if (!sb) throw new Error("auth not configured");
   const redirectTo =
     typeof window !== "undefined" ? `${window.location.origin}/app` : undefined;
-  const { error } = await sb.auth.signUp({
+  const { data, error } = await sb.auth.signUp({
     email,
     password,
     options: { emailRedirectTo: redirectTo },
   });
   if (error) throw error;
+  // When Supabase's "Confirm email" is OFF, signUp returns a real session and
+  // the user is immediately signed in. When it's ON, session is null and the
+  // user needs to click the email link first.
+  return { signedIn: !!data.session };
 }
 
 export async function resendVerification(email: string): Promise<void> {
@@ -148,7 +199,7 @@ export async function resendVerification(email: string): Promise<void> {
 }
 
 export async function signOut(): Promise<void> {
+  clearPasskey();
   const sb = getSupabase();
-  if (!sb) return;
-  await sb.auth.signOut();
+  if (sb) await sb.auth.signOut();
 }

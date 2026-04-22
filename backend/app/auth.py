@@ -29,13 +29,31 @@ class AuthedUser:
 
 def decode_supabase_jwt(token: str) -> AuthedUser:
     """Verify a Supabase access token and return (user_id, email). Raises
-    401 on any problem — expired, bad signature, missing sub, etc."""
-    if not settings.supabase_jwt_secret:
+    401 on any problem — expired, bad signature, missing sub, etc.
+
+    Also accepts babel-minted passkey tokens when they carry `iss=babel`.
+    Those are signed with BABEL_JWT_SECRET (falls back to the Supabase
+    secret if unset) so we can validate either without a DB round-trip."""
+    # Peek at iss to decide which secret to try first. We still validate
+    # the signature and expiry — iss alone doesn't authenticate anything.
+    try:
+        unverified = jwt.decode(token, options={"verify_signature": False})
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(status_code=401, detail=f"invalid token: {exc}")
+
+    is_babel = unverified.get("iss") == "babel"
+    secret = (
+        (settings.babel_jwt_secret or settings.supabase_jwt_secret)
+        if is_babel
+        else settings.supabase_jwt_secret
+    )
+    if not secret:
         raise HTTPException(status_code=503, detail="auth not configured")
+
     try:
         payload = jwt.decode(
             token,
-            settings.supabase_jwt_secret,
+            secret,
             algorithms=["HS256"],
             audience="authenticated",
         )

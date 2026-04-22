@@ -24,6 +24,10 @@ dependencies = [
     "pyjwt>=2.9",
     # Billing — Stripe Checkout sessions + webhook verification.
     "stripe>=11.0",
+    # WebAuthn / passkey auth as an alternative to Supabase Auth. Ships
+    # our own credential store + challenge flow; sessions are babel-minted
+    # JWTs (HS256) signed with BABEL_JWT_SECRET.
+    "webauthn>=2.5",
 ]
 
 [project.optional-dependencies]

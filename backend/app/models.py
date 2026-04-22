@@ -84,6 +84,37 @@ class Profile(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class PasskeyCredential(SQLModel, table=True):
+    """One row per registered passkey. A user may register multiple devices;
+    each appears here as its own credential.
+
+    `user_id` is the same opaque id carried in Profile.user_id — for
+    passkey-only accounts we mint a new UUID at signup; it never collides
+    with Supabase Auth UUIDs because we scope them behind an "iss" claim
+    in the babel JWT."""
+
+    credential_id: str = Field(primary_key=True)  # base64url of raw credential id
+    user_id: str = Field(index=True)
+    public_key: str                                # base64url cose key bytes
+    sign_count: int = 0
+    transports: Optional[str] = None               # csv: "usb,nfc,ble,internal"
+    label: Optional[str] = None                    # user-visible name
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    last_used_at: Optional[datetime] = None
+
+
+class PasskeyChallenge(SQLModel, table=True):
+    """Short-lived nonce issued during register/login ceremonies. Keyed by a
+    random id the client echoes back on completion."""
+
+    id: str = Field(primary_key=True)
+    challenge: str                                 # base64url bytes
+    kind: str                                      # "register" | "login"
+    user_id: Optional[str] = None                  # set during register, null during login
+    email: Optional[str] = None                    # friendly label captured on register
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class CreditLedger(SQLModel, table=True):
     """Immutable audit trail for every credit movement: top-ups from
     Stripe, consumption per completed job, admin grants, refunds. Lets
