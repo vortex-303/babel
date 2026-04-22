@@ -1,7 +1,6 @@
 import Link from "next/link";
 
 import { CreditsBadge } from "../_components/credits-badge";
-import { QuotaBanner } from "../_components/quota-banner";
 import { UserMenu } from "../_components/user-menu";
 import { HealthBadge } from "./_components/health-badge";
 import { RecentDocuments } from "./_components/recent-documents";
@@ -32,7 +31,6 @@ export default function Home() {
       </header>
 
       <main className="flex-1 max-w-5xl w-full mx-auto px-6 py-12">
-        <QuotaBanner />
         <UploadCard />
         <RecentDocuments />
       </main>
