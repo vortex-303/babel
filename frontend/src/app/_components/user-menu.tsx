@@ -336,7 +336,15 @@ export function UserMenu() {
           )}
 
           {(mode === "signin" || mode === "signup") && (
-            <>
+            <form
+              method="post"
+              action="#"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (mode === "signin") void submitSignIn();
+                else void submitSignUp();
+              }}
+            >
               <p className="text-xs text-zinc-500 mb-2">
                 {mode === "signin"
                   ? "Sign in with your email and password."
@@ -344,30 +352,29 @@ export function UserMenu() {
               </p>
               <input
                 type="email"
+                name="email"
                 value={email}
                 autoComplete="email"
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
+                required
                 className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-transparent px-2 py-1.5 mb-2 text-sm"
               />
               <input
                 type="password"
+                name="password"
                 value={password}
                 autoComplete={
                   mode === "signin" ? "current-password" : "new-password"
                 }
                 onChange={(e) => setPassword(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    if (mode === "signin") void submitSignIn();
-                    else void submitSignUp();
-                  }
-                }}
                 placeholder={
                   mode === "signin"
                     ? "password"
                     : "password (8+ characters)"
                 }
+                required
+                minLength={mode === "signup" ? 8 : undefined}
                 className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-transparent px-2 py-1.5 mb-2 text-sm"
               />
               {error && (
@@ -389,11 +396,8 @@ export function UserMenu() {
                 </button>
               )}
               <button
-                type="button"
+                type="submit"
                 disabled={busy || !email || !password}
-                onClick={() =>
-                  mode === "signin" ? void submitSignIn() : void submitSignUp()
-                }
                 className="w-full py-1.5 rounded-md bg-zinc-900 text-white text-xs font-medium disabled:opacity-50 dark:bg-white dark:text-black"
               >
                 {busy
@@ -426,7 +430,7 @@ export function UserMenu() {
               >
                 Cancel
               </button>
-            </>
+            </form>
           )}
 
           {mode === "admin" && (
