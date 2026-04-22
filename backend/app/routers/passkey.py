@@ -35,6 +35,8 @@ from webauthn import (
 from webauthn.helpers.cose import COSEAlgorithmIdentifier
 from webauthn.helpers.structs import (
     AuthenticationCredential,
+    AuthenticatorSelectionCriteria,
+    PublicKeyCredentialDescriptor,
     RegistrationCredential,
     ResidentKeyRequirement,
     UserVerificationRequirement,
@@ -144,13 +146,13 @@ def register_begin(
             COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_256,
         ],
         exclude_credentials=[
-            {"id": _b64url_decode(c.credential_id), "type": "public-key"}
+            PublicKeyCredentialDescriptor(id=_b64url_decode(c.credential_id))
             for c in existing
         ],
-        authenticator_selection={
-            "residentKey": ResidentKeyRequirement.PREFERRED,
-            "userVerification": UserVerificationRequirement.PREFERRED,
-        },
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            resident_key=ResidentKeyRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.PREFERRED,
+        ),
     )
 
     challenge_id = secrets.token_urlsafe(16)
