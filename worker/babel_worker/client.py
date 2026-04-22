@@ -15,9 +15,12 @@ T = TypeVar("T")
 
 # 5xx from Fly during scale-up/maintenance + any network timeout should
 # not kill a running job. Retry with exponential backoff before surfacing.
+# With _MAX_RETRIES=6 and _INITIAL_BACKOFF=3, total patience is roughly
+# 3+6+12+24+48+96 ≈ 3 minutes before we give up — enough for a Fly machine
+# to cold-start and take traffic.
 _RETRY_STATUS = {502, 503, 504}
-_MAX_RETRIES = 4
-_INITIAL_BACKOFF_SECONDS = 2.0
+_MAX_RETRIES = 6
+_INITIAL_BACKOFF_SECONDS = 3.0
 
 
 def _retry(op_name: str, fn: Callable[[], T]) -> T:
@@ -81,7 +84,7 @@ class ClaimedJob:
 
 
 class BackendClient:
-    def __init__(self, backend_url: str, worker_token: str, timeout: float = 60.0):
+    def __init__(self, backend_url: str, worker_token: str, timeout: float = 180.0):
         # `backend_url` should point at the FastAPI root. When pointing
         # directly at Fly (api.babeltower.lat) that's just the bare URL.
         # Only prepend the /api prefix if the user pointed us at Vercel
