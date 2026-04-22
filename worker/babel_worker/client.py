@@ -83,8 +83,78 @@ class ClaimedJob:
     context_chars: int
 
 
+class SupabaseAuth:
+    """Handles the Supabase password → access_token exchange + refresh.
+
+    The access token has a short lifetime (default 1h). We keep it in memory
+    and refresh 60s before expiry. A hard-failure during refresh falls back
+    to re-login with the stored email+password, so the worker recovers even
+    after a long pause (laptop closed overnight)."""
+
+    def __init__(self, supabase_url: str, anon_key: str, email: str, password: str):
+        self._url = supabase_url.rstrip("/")
+        self._anon = anon_key
+        self._email = email
+        self._password = password
+        self._access: str | None = None
+        self._refresh: str | None = None
+        self._expires_at: float = 0.0
+
+    def bearer(self) -> str:
+        """Return a valid access token, refreshing / re-logging-in as needed."""
+        now = time.time()
+        if self._access and now < self._expires_at - 60:
+            return self._access
+        if self._refresh:
+            try:
+                self._do_refresh()
+                return self._access  # type: ignore[return-value]
+            except httpx.HTTPError as e:
+                log.warning("refresh failed (%s) — re-logging in", e)
+        self._do_login()
+        return self._access  # type: ignore[return-value]
+
+    def _do_login(self) -> None:
+        r = httpx.post(
+            f"{self._url}/auth/v1/token",
+            params={"grant_type": "password"},
+            headers={"apikey": self._anon, "Content-Type": "application/json"},
+            json={"email": self._email, "password": self._password},
+            timeout=30.0,
+        )
+        if r.status_code >= 400:
+            raise SystemExit(
+                f"Supabase login failed ({r.status_code}): {r.text[:300]}\n"
+                f"Check BABEL_WORKER_EMAIL + BABEL_WORKER_PASSWORD."
+            )
+        self._apply(r.json())
+
+    def _do_refresh(self) -> None:
+        r = httpx.post(
+            f"{self._url}/auth/v1/token",
+            params={"grant_type": "refresh_token"},
+            headers={"apikey": self._anon, "Content-Type": "application/json"},
+            json={"refresh_token": self._refresh},
+            timeout=30.0,
+        )
+        r.raise_for_status()
+        self._apply(r.json())
+
+    def _apply(self, payload: dict) -> None:
+        self._access = payload["access_token"]
+        self._refresh = payload.get("refresh_token", self._refresh)
+        expires_in = int(payload.get("expires_in", 3600))
+        self._expires_at = time.time() + expires_in
+
+
 class BackendClient:
-    def __init__(self, backend_url: str, worker_token: str, timeout: float = 180.0):
+    def __init__(
+        self,
+        backend_url: str,
+        worker_token: str = "",
+        supabase: SupabaseAuth | None = None,
+        timeout: float = 180.0,
+    ):
         # `backend_url` should point at the FastAPI root. When pointing
         # directly at Fly (api.babeltower.lat) that's just the bare URL.
         # Only prepend the /api prefix if the user pointed us at Vercel
@@ -94,15 +164,27 @@ class BackendClient:
         if "://api." not in base:
             base = base + "/api"
         self._base = base
-        self._headers = {"Authorization": f"Bearer {worker_token}"}
-        self._client = httpx.Client(timeout=timeout, headers=self._headers)
+        self._supabase = supabase
+        self._worker_token = worker_token
+        # httpx auth header is set per-request when using Supabase so the
+        # short-lived access_token is always fresh.
+        self._client = httpx.Client(timeout=timeout)
+
+    def _auth_header(self) -> dict[str, str]:
+        if self._supabase is not None:
+            return {"Authorization": f"Bearer {self._supabase.bearer()}"}
+        return {"Authorization": f"Bearer {self._worker_token}"}
+
+    def _request(self, method: str, path: str, **kw) -> httpx.Response:
+        headers = {**kw.pop("headers", {}), **self._auth_header()}
+        return self._client.request(method, f"{self._base}{path}", headers=headers, **kw)
 
     def close(self) -> None:
         self._client.close()
 
     def claim_next(self) -> ClaimedJob | None:
         def _do() -> ClaimedJob | None:
-            r = self._client.post(f"{self._base}/worker/claim-next")
+            r = self._request("POST", "/worker/claim-next")
             r.raise_for_status()
             return self._parse_claim(r)
         return _retry("claim-next", _do)
@@ -111,7 +193,7 @@ class BackendClient:
         """Claim a specific job by id. Returns None if it's been snatched by
         someone else or is no longer QUEUED."""
         def _do() -> ClaimedJob | None:
-            r = self._client.post(f"{self._base}/worker/claim/{job_id}")
+            r = self._request("POST", f"/worker/claim/{job_id}")
             if r.status_code == 409:
                 return None
             r.raise_for_status()
@@ -120,7 +202,7 @@ class BackendClient:
 
     def list_queue(self) -> list[QueueItem]:
         def _do() -> list[QueueItem]:
-            r = self._client.get(f"{self._base}/worker/queue")
+            r = self._request("GET", "/worker/queue")
             r.raise_for_status()
             return [
                 QueueItem(
@@ -164,8 +246,9 @@ class BackendClient:
 
     def upload_chunk(self, job_id: int, idx: int, translated_text: str) -> dict:
         def _do() -> dict:
-            r = self._client.post(
-                f"{self._base}/worker/jobs/{job_id}/chunks/{idx}",
+            r = self._request(
+                "POST",
+                f"/worker/jobs/{job_id}/chunks/{idx}",
                 json={"translated_text": translated_text},
             )
             r.raise_for_status()
@@ -174,14 +257,15 @@ class BackendClient:
 
     def mark_done(self, job_id: int) -> None:
         def _do() -> None:
-            r = self._client.post(f"{self._base}/worker/jobs/{job_id}/done")
+            r = self._request("POST", f"/worker/jobs/{job_id}/done")
             r.raise_for_status()
         _retry(f"mark-done({job_id})", _do)
 
     def mark_failed(self, job_id: int, error: str) -> None:
         def _do() -> None:
-            r = self._client.post(
-                f"{self._base}/worker/jobs/{job_id}/fail",
+            r = self._request(
+                "POST",
+                f"/worker/jobs/{job_id}/fail",
                 json={"error": error},
             )
             r.raise_for_status()
@@ -197,8 +281,9 @@ class BackendClient:
         current_job_id: int | None = None,
     ) -> None:
         try:
-            self._client.post(
-                f"{self._base}/worker/heartbeat",
+            self._request(
+                "POST",
+                "/worker/heartbeat",
                 json={
                     "worker_id": worker_id,
                     "hostname": hostname,

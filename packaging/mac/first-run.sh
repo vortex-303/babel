@@ -29,12 +29,32 @@ APPLESCRIPT
 
 [ -n "$BACKEND" ] || exit 1
 
-# ---- worker token -------------------------------------------------------
-TOKEN=$(osascript <<'APPLESCRIPT'
+# ---- email --------------------------------------------------------------
+EMAIL=$(osascript <<'APPLESCRIPT'
 try
     set answer to text returned of (display dialog ¬
-        "Worker token" & return & return & ¬
-        "Paste the BABEL_WORKER_TOKEN from your admin. Keep it secret." ¬
+        "Email" & return & return & ¬
+        "Sign in with your babeltower.lat account — the one that bought the self-host license." ¬
+        default answer "" ¬
+        buttons {"Cancel", "Continue"} ¬
+        default button "Continue" ¬
+        with icon note ¬
+        with title "babel · first-run setup")
+    return answer
+on error number -128
+    return ""
+end try
+APPLESCRIPT
+)
+
+[ -n "$EMAIL" ] || exit 1
+
+# ---- password -----------------------------------------------------------
+PASSWORD=$(osascript <<'APPLESCRIPT'
+try
+    set answer to text returned of (display dialog ¬
+        "Password" & return & return & ¬
+        "Stored locally at ~/.config/babel-worker/config.env (chmod 600)." ¬
         default answer "" ¬
         buttons {"Cancel", "Continue"} ¬
         default button "Continue" ¬
@@ -48,14 +68,15 @@ end try
 APPLESCRIPT
 )
 
-[ -n "$TOKEN" ] || exit 1
+[ -n "$PASSWORD" ] || exit 1
 
 # ---- write config -------------------------------------------------------
 umask 077
 cat > "$CFG" <<EOF
 # babel-worker config — written by first-run.sh. Edit by hand if needed.
 BABEL_WORKER_BACKEND_URL=$BACKEND
-BABEL_WORKER_TOKEN=$TOKEN
+BABEL_WORKER_EMAIL=$EMAIL
+BABEL_WORKER_PASSWORD=$PASSWORD
 BABEL_WORKER_LLAMA_HOST=127.0.0.1
 BABEL_WORKER_LLAMA_PORT=8080
 BABEL_WORKER_POLL_INTERVAL=5.0

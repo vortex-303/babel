@@ -12,7 +12,7 @@ import time
 import httpx
 
 from babel_worker.adapter import LlamaCppClient
-from babel_worker.client import BackendClient, ClaimedJob
+from babel_worker.client import BackendClient, ClaimedJob, SupabaseAuth
 from babel_worker.config import Config
 from babel_worker.state import Controller
 
@@ -183,7 +183,20 @@ def _run_inner(cfg: Config, controller: Controller) -> None:
             last_error=f"llama-server unreachable at {cfg.llama_host}:{cfg.llama_port}",
         )
 
-    backend = BackendClient(cfg.backend_url, cfg.worker_token)
+    if cfg.uses_supabase_auth:
+        sb_auth = SupabaseAuth(
+            cfg.supabase_url,
+            cfg.supabase_anon_key,
+            cfg.user_email,
+            cfg.user_password,
+        )
+        # Log in eagerly so a bad password surfaces up-front, not 5s later.
+        sb_auth.bearer()
+        backend = BackendClient(cfg.backend_url, supabase=sb_auth)
+        log.info("worker signed in as %s (self-host license)", cfg.user_email)
+    else:
+        backend = BackendClient(cfg.backend_url, worker_token=cfg.worker_token)
+        log.info("worker authed with shared admin token")
     log.info(
         "worker %s polling %s every %ss",
         cfg.worker_id,

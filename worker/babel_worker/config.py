@@ -25,16 +25,24 @@ def _load_dotenv(path: Path) -> None:
 @dataclass
 class Config:
     backend_url: str
-    worker_token: str
+    # Either the shared admin bearer token (BABEL_WORKER_TOKEN) OR a user's
+    # Supabase credentials. Exactly one must be set.
+    worker_token: str = ""
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
+    user_email: str = ""
+    user_password: str = ""
+
     llama_host: str = "127.0.0.1"
     llama_port: int = 8080
     poll_interval_seconds: float = 5.0
     heartbeat_interval_seconds: float = 30.0
     worker_id: str = ""
-    # Worker drains the queue automatically. The "explicit trigger" step
-    # lives on the website (per-document Translate button), so anything
-    # already QUEUED was opted into by the uploader.
     auto_claim: bool = True
+
+    @property
+    def uses_supabase_auth(self) -> bool:
+        return bool(self.user_email and self.user_password and self.supabase_url)
 
     @classmethod
     def from_env(cls, config_path: Path | None = None) -> "Config":
@@ -52,6 +60,15 @@ class Config:
 
         backend = os.environ.get("BABEL_WORKER_BACKEND_URL", "").rstrip("/")
         token = os.environ.get("BABEL_WORKER_TOKEN", "")
+        email = os.environ.get("BABEL_WORKER_EMAIL", "")
+        password = os.environ.get("BABEL_WORKER_PASSWORD", "")
+        sb_url = os.environ.get(
+            "BABEL_SUPABASE_URL", "https://aimfjhjgzacdhxxmjlvf.supabase.co"
+        )
+        sb_anon = os.environ.get(
+            "BABEL_SUPABASE_ANON_KEY",
+            "sb_publishable_2PPS16erERoTSVJPGtZrng_MW_RRKm6",
+        )
 
         if not backend:
             raise SystemExit(
@@ -60,15 +77,23 @@ class Config:
                 "  ~/.config/babel-worker/config.env\n"
                 "  ./babel-worker.env"
             )
-        if not token:
+        if not token and not (email and password):
             raise SystemExit(
-                "error: BABEL_WORKER_TOKEN not set. Get it from the admin — "
-                "same value as the backend's BABEL_WORKER_TOKEN."
+                "error: no auth configured. Set either:\n"
+                "  BABEL_WORKER_EMAIL + BABEL_WORKER_PASSWORD  (self-host user)\n"
+                "or\n"
+                "  BABEL_WORKER_TOKEN  (shared admin token)\n"
+                "Self-host users: create an account at https://babeltower.lat/app,"
+                " buy the self-host license, then paste your email + password here."
             )
 
         return cls(
             backend_url=backend,
             worker_token=token,
+            supabase_url=sb_url.rstrip("/"),
+            supabase_anon_key=sb_anon,
+            user_email=email,
+            user_password=password,
             llama_host=os.environ.get("BABEL_WORKER_LLAMA_HOST", "127.0.0.1"),
             llama_port=int(os.environ.get("BABEL_WORKER_LLAMA_PORT", "8080")),
             poll_interval_seconds=float(
