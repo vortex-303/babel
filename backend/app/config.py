@@ -87,9 +87,12 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str = ""
 
     # Free-tier words each anonymous session gets before we gate on sign-in.
-    guest_trial_words: int = 5000
-    # Words an authed user gets the first time we see them (0 for paid-only).
-    signup_bonus_words: int = 0
+    # Roughly one chapter so people can try the pipeline without committing.
+    guest_trial_words: int = 10_000
+    # Signed-up users get 3 novels worth — enough to translate a couple
+    # of books end-to-end before they hit the Buy page. Admin-gated in
+    # MANUAL queue mode, so we can still refuse abuse case-by-case.
+    signup_bonus_words: int = 300_000
 
     # --- Billing (Stripe) ---
     # Secret key for server-side calls. Empty = billing disabled.
