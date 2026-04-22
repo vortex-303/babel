@@ -149,6 +149,15 @@ export function TriggerForm({
       if (!anRes.ok) throw new Error(await errorText(anRes));
 
       const trRes = await api(`/api/jobs/${job.id}/translate`, { method: "POST" });
+      if (trRes.status === 402) {
+        const j = await trRes.json().catch(() => ({}));
+        const detail = j.detail ?? {};
+        const msg = detail.signed_in
+          ? `Needs ${detail.needed?.toLocaleString() ?? "?"} words, you have ${detail.available?.toLocaleString() ?? "?"}. Buy more to continue.`
+          : `This doc needs ${detail.needed?.toLocaleString() ?? "?"} words. Free trial has ${detail.available?.toLocaleString() ?? "?"} left — sign in and buy credits to continue.`;
+        setError(msg);
+        return;
+      }
       if (!trRes.ok) throw new Error(await errorText(trRes));
 
       onDone();
@@ -216,7 +225,16 @@ export function TriggerForm({
             Dismiss
           </button>
         )}
-        {error && <p className="text-xs text-red-600">{error}</p>}
+        {error && (
+          <p className="text-xs text-red-600">
+            {error}{" "}
+            {error.toLowerCase().includes("words") && (
+              <a href="/app/billing" className="underline font-medium">
+                Buy credits
+              </a>
+            )}
+          </p>
+        )}
       </div>
     </div>
   );

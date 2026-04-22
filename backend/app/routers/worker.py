@@ -10,7 +10,8 @@ from sqlmodel import Session, select
 
 from app.db import get_session
 from app.deps import require_worker
-from app.models import Chunk, Document, GlossaryTerm, Job, JobStatus
+from app.models import Chunk, Document, GlossaryTerm, Job, JobStatus, Profile
+from app.services import credits as credits_svc
 
 router = APIRouter(prefix="/worker", tags=["worker"], dependencies=[Depends(require_worker)])
 
@@ -227,6 +228,20 @@ def mark_done(job_id: int, session: Session = Depends(get_session)) -> dict:
     job.finished_at = datetime.utcnow()
     session.add(job)
     session.commit()
+    session.refresh(job)
+
+    # Charge the owner. Admin jobs are free. Authed users pay from balance;
+    # guests decrement their in-process trial bucket.
+    doc = session.get(Document, job.document_id)
+    if doc and doc.owner_id and doc.owner_id != "*":
+        profile = session.get(Profile, doc.owner_id)
+        credits_svc.charge_for_job(
+            session,
+            job,
+            profile=profile,
+            guest_session_id=None if profile else doc.owner_id,
+        )
+
     return {"ok": True, "status": job.status.value}
 
 

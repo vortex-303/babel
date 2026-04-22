@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { CreditsBadge } from "../_components/credits-badge";
 import { UserMenu } from "../_components/user-menu";
 import { HealthBadge } from "./_components/health-badge";
 import { RecentDocuments } from "./_components/recent-documents";
@@ -23,6 +24,7 @@ export default function Home() {
           <div className="flex items-center gap-3">
             <WorkerBadge />
             <HealthBadge />
+            <CreditsBadge />
             <UserMenu />
           </div>
         </div>

@@ -81,6 +81,25 @@ class Settings(BaseSettings):
     supabase_service_key: str = ""
     storage_bucket: str = "babel"
 
+    # --- Auth (Supabase) ---
+    # Supabase's project JWT secret. Used to verify Authorization: Bearer
+    # <jwt> sent by the frontend. Empty = auth disabled (guest-only mode).
+    supabase_jwt_secret: str = ""
+
+    # Free-tier words each anonymous session gets before we gate on sign-in.
+    guest_trial_words: int = 5000
+    # Words an authed user gets the first time we see them (0 for paid-only).
+    signup_bonus_words: int = 0
+
+    # --- Billing (Stripe) ---
+    # Secret key for server-side calls. Empty = billing disabled.
+    stripe_secret_key: str = ""
+    # Webhook signing secret from the Stripe dashboard → webhooks.
+    stripe_webhook_secret: str = ""
+    # Success/cancel URLs for Stripe Checkout. Set to babeltower.lat in prod.
+    stripe_success_url: str = "http://127.0.0.1:3838/app/billing?status=ok"
+    stripe_cancel_url: str = "http://127.0.0.1:3838/app/billing?status=cancel"
+
     def ensure_dirs(self) -> None:
         for d in (self.data_dir, self.uploads_dir, self.outputs_dir):
             d.mkdir(parents=True, exist_ok=True)

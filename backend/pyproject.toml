@@ -20,6 +20,10 @@ dependencies = [
     # Postgres driver for cloud deploys (Supabase). SQLAlchemy uses it via
     # the postgresql+psycopg:// URL scheme wired up in app/db.py.
     "psycopg[binary]>=3.2",
+    # Auth — verify Supabase-issued JWTs on Authorization: Bearer calls.
+    "pyjwt>=2.9",
+    # Billing — Stripe Checkout sessions + webhook verification.
+    "stripe>=11.0",
 ]
 
 [project.optional-dependencies]

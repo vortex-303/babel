@@ -7,11 +7,13 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import delete
 from sqlmodel import Session, func, select
 
+from app.auth import AuthedUser, require_authed_user
 from app.config import settings
 from app.db import get_session
 from app.deps import OWNER_ADMIN, get_owner_id, is_admin
 from app.models import Chunk, Document, GlossaryTerm, Job
 from app.services import ingest as ingest_service
+from pydantic import BaseModel
 from app.services.analyzer import count_tokens
 from app.services.langdetect_util import detect_language
 from app.services.storage import get_storage
@@ -215,3 +217,29 @@ def _owned_by(doc: Document, owner: str) -> bool:
     if owner == OWNER_ADMIN:
         return True
     return doc.owner_id is not None and doc.owner_id == owner
+
+
+class ClaimBody(BaseModel):
+    session_id: str
+
+
+@router.post("/claim")
+def claim_guest_documents(
+    body: ClaimBody,
+    user: AuthedUser = Depends(require_authed_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Transfer every document + its jobs from a guest session id to the
+    signed-in user. Called by the frontend right after login so the user
+    keeps whatever they uploaded before signing up."""
+    if not body.session_id or body.session_id == user.user_id:
+        return {"ok": True, "claimed": 0}
+
+    docs = session.exec(
+        select(Document).where(Document.owner_id == body.session_id)
+    ).all()
+    for d in docs:
+        d.owner_id = user.user_id
+        session.add(d)
+    session.commit()
+    return {"ok": True, "claimed": len(docs)}

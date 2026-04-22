@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import Depends, Header, HTTPException, Query
 
+from app.auth import AuthedUser, get_authed_user
 from app.config import settings
 
 
@@ -33,18 +34,21 @@ def get_owner_id(
     x_session_id: str | None = Header(default=None),
     session: str | None = Query(default=None),
     admin: bool = Depends(is_admin),
+    user: AuthedUser | None = Depends(get_authed_user),
 ) -> str:
-    """Identify the caller for tenancy filtering. Admin gets the sentinel
-    OWNER_ADMIN; everyone else gets their session id from the X-Session-ID
-    header OR a ?session= query param (browser downloads via <a href download>
-    can't set headers, so they pass the id in the URL instead)."""
+    """Identify the caller for tenancy filtering. Priority order:
+        admin (sentinel "*") > authed user id > session id (header or ?query=).
+    Browser downloads via <a href download> can't set headers so they pass
+    the session/admin in the URL instead."""
     if admin:
         return OWNER_ADMIN
+    if user is not None:
+        return user.user_id
     owner = x_session_id or session
     if not owner:
         raise HTTPException(
             status_code=400,
-            detail="missing session: set X-Session-ID header or ?session= query param",
+            detail="missing session: sign in or send X-Session-ID / ?session=",
         )
     return owner
 

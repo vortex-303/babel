@@ -10,10 +10,12 @@ from sqlalchemy import delete
 from sqlmodel import Session, func, select
 
 from app.adapters import IMPLEMENTED_ADAPTERS
+from app.auth import get_profile_optional
 from app.config import settings
 from app.db import get_session
 from app.deps import OWNER_ADMIN, get_owner_id, is_admin
-from app.models import Chunk, Document, GlossaryTerm, Job, JobStatus
+from app.models import Chunk, Document, GlossaryTerm, Job, JobStatus, Profile
+from app.services import credits as credits_svc
 from app.services import queue as job_queue
 from app.services.analyzer import ADAPTER_PROFILES, chunk_document, estimate
 from app.services.assemble import ASSEMBLERS
@@ -172,12 +174,13 @@ def enqueue_translate(
     session: Session = Depends(get_session),
     admin: bool = Depends(is_admin),
     owner: str = Depends(get_owner_id),
+    profile: Profile | None = Depends(get_profile_optional),
 ) -> dict:
     """Enqueue a job for translation. The queue worker picks it up and runs
     one job at a time. In MANUAL mode non-admin submissions land in
     PENDING_APPROVAL until an admin accepts. Admin submissions always go
     straight to QUEUED regardless of mode."""
-    job, _doc = _require_owned_job(session, job_id, owner)
+    job, doc = _require_owned_job(session, job_id, owner)
     if job.model_adapter not in IMPLEMENTED_ADAPTERS:
         raise HTTPException(
             status_code=400,
@@ -198,6 +201,24 @@ def enqueue_translate(
     ).one()
     if not chunk_count:
         raise HTTPException(status_code=400, detail="no chunks — call /analyze first")
+
+    # Credit gate — admin bypasses. Authed users pay from their balance,
+    # guests from their trial bucket. owner_id doubles as the guest session.
+    if not admin:
+        needed = doc.word_count or 0
+        available = credits_svc.available_credits(
+            profile, guest_session_id=None if profile else owner
+        )
+        if needed > available:
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "insufficient_credits",
+                    "needed": needed,
+                    "available": available,
+                    "signed_in": profile is not None,
+                },
+            )
 
     mode = job_queue.get_mode(settings.queue_mode)
     needs_approval = mode == "manual" and not admin

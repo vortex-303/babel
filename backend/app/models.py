@@ -71,6 +71,33 @@ class Chunk(SQLModel, table=True):
     translated_at: Optional[datetime] = None
 
 
+class Profile(SQLModel, table=True):
+    """One row per authenticated user. `user_id` is the Supabase
+    `auth.users.id` UUID (stored as text). Balance + usage are in words,
+    not tokens — the unit we quote to users."""
+
+    user_id: str = Field(primary_key=True)
+    email: Optional[str] = None
+    credits_balance: int = 0  # remaining words the user can translate
+    credits_used: int = 0     # lifetime words translated (for receipts + analytics)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CreditLedger(SQLModel, table=True):
+    """Immutable audit trail for every credit movement: top-ups from
+    Stripe, consumption per completed job, admin grants, refunds. Lets
+    support debug any "where did my credits go" question."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: str = Field(index=True)
+    delta: int                       # +top-up / -consumption
+    reason: str                      # "stripe_topup" | "job_consume" | "admin_grant" | ...
+    job_id: Optional[int] = Field(default=None, foreign_key="job.id")
+    stripe_session_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class GlossaryTerm(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     job_id: int = Field(foreign_key="job.id", index=True)

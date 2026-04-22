@@ -9,7 +9,7 @@ from sqlmodel import select
 from app.config import settings
 from app.db import init_db, new_session
 from app.models import Job, JobStatus
-from app.routers import admin, documents, jobs, worker
+from app.routers import admin, billing, documents, jobs, worker
 from app.services.queue import queue_loop
 from app.services.watchdog import watchdog_loop
 
@@ -86,6 +86,7 @@ app.include_router(documents.router)
 app.include_router(jobs.router)
 app.include_router(admin.router)
 app.include_router(worker.router)
+app.include_router(billing.router)
 
 
 @app.get("/health")
