@@ -53,3 +53,8 @@ supabase/.temp/
 supabase/.branches/
 .vercel
 packaging/mac/build/
+
+# Python sdist/bdist build artifacts
+worker/build/
+worker/dist/
+worker/**/*.egg-info/
