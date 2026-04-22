@@ -4,16 +4,24 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { api, getAdminCode, setAdminCode } from "@/app/_lib/admin";
-import { signInWithEmail, signOut, useAuth } from "@/app/_lib/auth";
+import {
+  resendVerification,
+  signInWithPassword,
+  signOut,
+  signUpWithPassword,
+  useAuth,
+} from "@/app/_lib/auth";
 import { isAuthConfigured } from "@/app/_lib/supabase";
 
-type Mode = "menu" | "signin" | "admin";
+type Mode = "menu" | "signin" | "signup" | "admin";
 
 export function UserMenu() {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("menu");
   const [code, setCode] = useState<string | null>(null);
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [needsVerify, setNeedsVerify] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -28,15 +36,77 @@ export function UserMenu() {
     setCode(getAdminCode());
   }, []);
 
-  const submitMagicLink = async () => {
+  const resetAuthForm = () => {
+    setEmail("");
+    setPassword("");
+    setError(null);
+    setMessage(null);
+    setNeedsVerify(false);
+  };
+
+  const submitSignIn = async () => {
     setError(null);
     setMessage(null);
     setBusy(true);
     try {
-      await signInWithEmail(email.trim());
-      setMessage("Check your email for the sign-in link.");
+      const { needsVerification } = await signInWithPassword(
+        email.trim(),
+        password,
+      );
+      if (needsVerification) {
+        setNeedsVerify(true);
+        setMessage(
+          "Please verify your email first. Check your inbox for the link.",
+        );
+        return;
+      }
+      setOpen(false);
+      setMode("menu");
+      resetAuthForm();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "sign-in failed");
+      setError(friendlyAuthError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitSignUp = async () => {
+    setError(null);
+    setMessage(null);
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await signUpWithPassword(email.trim(), password);
+      setMessage(
+        `Verification email sent to ${email}. Click the link, then come back and sign in.`,
+      );
+      setMode("signin");
+      setPassword("");
+    } catch (e) {
+      setError(friendlyAuthError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitResend = async () => {
+    setError(null);
+    setMessage(null);
+    setBusy(true);
+    try {
+      await resendVerification(email.trim());
+      setMessage("Verification email sent. Check your inbox.");
+    } catch (e) {
+      const msg = friendlyAuthError(e);
+      // Rate-limit is the common case here; soften the tone.
+      if (msg.toLowerCase().includes("rate")) {
+        setError("Too many requests. Wait a minute and try again.");
+      } else {
+        setError(msg);
+      }
     } finally {
       setBusy(false);
     }
@@ -121,17 +191,28 @@ export function UserMenu() {
                 </div>
               )}
               {!signedIn && authAvailable && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode("signin");
-                    setError(null);
-                    setMessage(null);
-                  }}
-                  className="block w-full text-left py-1.5 px-2 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-900"
-                >
-                  Sign in / sign up
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("signin");
+                      resetAuthForm();
+                    }}
+                    className="block w-full text-left py-1.5 px-2 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-900"
+                  >
+                    Sign in
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("signup");
+                      resetAuthForm();
+                    }}
+                    className="block w-full text-left py-1.5 px-2 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-900"
+                  >
+                    Create account
+                  </button>
+                </>
               )}
               {!isAdmin && (
                 <button
@@ -166,19 +247,39 @@ export function UserMenu() {
             </>
           )}
 
-          {mode === "signin" && (
+          {(mode === "signin" || mode === "signup") && (
             <>
               <p className="text-xs text-zinc-500 mb-2">
-                We’ll email you a one-time sign-in link.
+                {mode === "signin"
+                  ? "Sign in with your email and password."
+                  : "Create an account — we’ll email you a verification link."}
               </p>
               <input
                 type="email"
                 value={email}
+                autoComplete="email"
                 onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void submitMagicLink();
-                }}
                 placeholder="you@example.com"
+                className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-transparent px-2 py-1.5 mb-2 text-sm"
+              />
+              <input
+                type="password"
+                value={password}
+                autoComplete={
+                  mode === "signin" ? "current-password" : "new-password"
+                }
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    if (mode === "signin") void submitSignIn();
+                    else void submitSignUp();
+                  }
+                }}
+                placeholder={
+                  mode === "signin"
+                    ? "password"
+                    : "password (8+ characters)"
+                }
                 className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-transparent px-2 py-1.5 mb-2 text-sm"
               />
               {error && (
@@ -189,18 +290,51 @@ export function UserMenu() {
                   {message}
                 </p>
               )}
+              {needsVerify && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void submitResend()}
+                  className="w-full mb-2 py-1.5 rounded-md border border-emerald-600 text-emerald-700 dark:text-emerald-300 text-xs font-medium disabled:opacity-50"
+                >
+                  Resend verification email
+                </button>
+              )}
               <button
                 type="button"
-                disabled={busy || !email}
-                onClick={() => void submitMagicLink()}
+                disabled={busy || !email || !password}
+                onClick={() =>
+                  mode === "signin" ? void submitSignIn() : void submitSignUp()
+                }
                 className="w-full py-1.5 rounded-md bg-zinc-900 text-white text-xs font-medium disabled:opacity-50 dark:bg-white dark:text-black"
               >
-                {busy ? "Sending…" : "Send magic link"}
+                {busy
+                  ? mode === "signin"
+                    ? "Signing in…"
+                    : "Creating…"
+                  : mode === "signin"
+                    ? "Sign in"
+                    : "Create account"}
               </button>
               <button
                 type="button"
-                onClick={() => setMode("menu")}
+                onClick={() => {
+                  setMode(mode === "signin" ? "signup" : "signin");
+                  resetAuthForm();
+                }}
                 className="w-full mt-1 py-1 rounded-md text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+              >
+                {mode === "signin"
+                  ? "No account yet? Create one"
+                  : "Have an account? Sign in"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("menu");
+                  resetAuthForm();
+                }}
+                className="w-full py-1 rounded-md text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
               >
                 Cancel
               </button>
@@ -249,3 +383,15 @@ export function UserMenu() {
 }
 
 export { api };
+
+function friendlyAuthError(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  const msg = raw.toLowerCase();
+  if (msg.includes("invalid login credentials")) return "Wrong email or password.";
+  if (msg.includes("user already registered"))
+    return "An account with this email already exists. Sign in instead.";
+  if (msg.includes("password") && msg.includes("weak"))
+    return "Password too weak. Try 8+ characters with mixed types.";
+  if (msg.includes("rate")) return "Too many requests. Wait a minute and try again.";
+  return raw;
+}

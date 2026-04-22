@@ -96,12 +96,51 @@ export function useAuth(): {
   return { session, profile, loading, refreshProfile };
 }
 
-export async function signInWithEmail(email: string): Promise<void> {
+export async function signInWithPassword(
+  email: string,
+  password: string,
+): Promise<{ needsVerification: boolean }> {
+  const sb = getSupabase();
+  if (!sb) throw new Error("auth not configured");
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if (!error) return { needsVerification: false };
+  // Supabase returns a specific code when the user exists but hasn't clicked
+  // their verification link yet. Surface that to the UI so it can prompt a
+  // resend rather than showing "bad credentials".
+  const msg = (error.message ?? "").toLowerCase();
+  if (
+    error.code === "email_not_confirmed" ||
+    msg.includes("email not confirmed") ||
+    msg.includes("not been confirmed")
+  ) {
+    return { needsVerification: true };
+  }
+  throw error;
+}
+
+export async function signUpWithPassword(
+  email: string,
+  password: string,
+): Promise<void> {
   const sb = getSupabase();
   if (!sb) throw new Error("auth not configured");
   const redirectTo =
     typeof window !== "undefined" ? `${window.location.origin}/app` : undefined;
-  const { error } = await sb.auth.signInWithOtp({
+  const { error } = await sb.auth.signUp({
+    email,
+    password,
+    options: { emailRedirectTo: redirectTo },
+  });
+  if (error) throw error;
+}
+
+export async function resendVerification(email: string): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) throw new Error("auth not configured");
+  const redirectTo =
+    typeof window !== "undefined" ? `${window.location.origin}/app` : undefined;
+  const { error } = await sb.auth.resend({
+    type: "signup",
     email,
     options: { emailRedirectTo: redirectTo },
   });
