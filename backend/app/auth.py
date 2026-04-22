@@ -1,22 +1,52 @@
 """Supabase Auth integration.
 
 The frontend sends `Authorization: Bearer <jwt>` on every api() call once a
-user has signed in. We verify the JWT against the project's shared secret
-(same one Supabase uses to mint tokens) and load-or-create a Profile row
-for that user. Guest calls without the header fall through unauthenticated.
+user has signed in. We verify the JWT using:
+
+  - ES256 via Supabase's JWKS endpoint for Supabase-issued tokens (the
+    current default for projects using the new JWT Signing Keys system)
+  - HS256 with a project-local secret for babel-minted passkey tokens
+    (iss=babel)
+
+JWKS is fetched lazily and cached — no per-request round-trip.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
+from threading import Lock
 
 import jwt
 from fastapi import Depends, Header, HTTPException
+from jwt import PyJWKClient
 from sqlmodel import Session
 
 from app.config import settings
 from app.db import get_session
 from app.models import Profile
+
+
+_JWKS_CLIENT: PyJWKClient | None = None
+_JWKS_LOCK = Lock()
+
+
+def _get_jwks_client() -> PyJWKClient:
+    """Lazy, thread-safe JWKS client bound to the configured Supabase project.
+    PyJWKClient caches keys internally with a short TTL so we don't hammer
+    Supabase on every request."""
+    global _JWKS_CLIENT
+    if _JWKS_CLIENT is not None:
+        return _JWKS_CLIENT
+    with _JWKS_LOCK:
+        if _JWKS_CLIENT is None:
+            if not settings.supabase_url:
+                raise HTTPException(status_code=503, detail="supabase url not configured")
+            _JWKS_CLIENT = PyJWKClient(
+                f"{settings.supabase_url}/auth/v1/.well-known/jwks.json",
+                cache_jwk_set=True,
+                lifespan=3600,
+            )
+        return _JWKS_CLIENT
 
 
 class AuthedUser:
@@ -28,35 +58,35 @@ class AuthedUser:
 
 
 def decode_supabase_jwt(token: str) -> AuthedUser:
-    """Verify a Supabase access token and return (user_id, email). Raises
-    401 on any problem — expired, bad signature, missing sub, etc.
-
-    Also accepts babel-minted passkey tokens when they carry `iss=babel`.
-    Those are signed with BABEL_JWT_SECRET (falls back to the Supabase
-    secret if unset) so we can validate either without a DB round-trip."""
-    # Peek at iss to decide which secret to try first. We still validate
-    # the signature and expiry — iss alone doesn't authenticate anything.
+    """Verify a Supabase-issued (ES256 via JWKS) or babel-minted (HS256)
+    access token. Raises 401 on any problem — expired, bad signature,
+    missing sub, etc. Caller decides whether to soft-fail or propagate."""
     try:
         unverified = jwt.decode(token, options={"verify_signature": False})
     except jwt.InvalidTokenError as exc:
         raise HTTPException(status_code=401, detail=f"invalid token: {exc}")
 
-    is_babel = unverified.get("iss") == "babel"
-    secret = (
-        (settings.babel_jwt_secret or settings.supabase_jwt_secret)
-        if is_babel
-        else settings.supabase_jwt_secret
-    )
-    if not secret:
-        raise HTTPException(status_code=503, detail="auth not configured")
-
     try:
-        payload = jwt.decode(
-            token,
-            secret,
-            algorithms=["HS256"],
-            audience="authenticated",
-        )
+        if unverified.get("iss") == "babel":
+            # Babel-minted passkey token — HS256 with our own secret.
+            secret = settings.babel_jwt_secret or settings.supabase_jwt_secret
+            if not secret:
+                raise HTTPException(status_code=503, detail="auth not configured")
+            payload = jwt.decode(
+                token,
+                secret,
+                algorithms=["HS256"],
+                audience="authenticated",
+            )
+        else:
+            # Supabase-issued token — ES256 verified against the project JWKS.
+            signing_key = _get_jwks_client().get_signing_key_from_jwt(token)
+            payload = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["ES256", "HS256"],
+                audience="authenticated",
+            )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="token expired")
     except jwt.InvalidTokenError as exc:
