@@ -3,11 +3,6 @@
 import { useEffect, useState } from "react";
 
 import { api } from "./admin";
-import {
-  clearPasskey,
-  getPasskeyEmail,
-  getPasskeyToken,
-} from "./passkey";
 import { getSessionId } from "./session";
 import { getSupabase, type Session } from "./supabase";
 
@@ -19,15 +14,11 @@ export type Profile = {
 };
 
 export type AuthState = {
-  /** True when either Supabase session OR a passkey token is present. */
   signedIn: boolean;
-  /** "passkey" | "supabase" | null — null before load, useful for UI. */
-  provider: "passkey" | "supabase" | null;
-  /** Human-readable identifier for the pill. */
   displayEmail: string | null;
 };
 
-/** Tracks auth state across both Supabase and babel-passkey providers. */
+/** Tracks Supabase auth state + the backend profile (credits). */
 export function useAuth(): {
   session: Session | null;
   profile: Profile | null;
@@ -38,13 +29,9 @@ export function useAuth(): {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [passkeyEmail, setPasskeyEmail] = useState<string | null>(null);
 
   const refreshProfile = async () => {
-    // Either a passkey token or a Supabase session can drive the profile
-    // fetch — api() picks whichever is present as the Authorization header.
-    const hasAny = !!getPasskeyToken() || !!session;
-    if (!hasAny) {
+    if (!session) {
       setProfile(null);
       return;
     }
@@ -57,88 +44,59 @@ export function useAuth(): {
   };
 
   useEffect(() => {
-    let mounted = true;
     const sb = getSupabase();
+    if (!sb) {
+      setLoading(false);
+      return;
+    }
+    let mounted = true;
 
     void (async () => {
-      setPasskeyEmail(getPasskeyEmail());
-
-      if (sb) {
-        const {
-          data: { session: s },
-        } = await sb.auth.getSession();
-        if (mounted) setSession(s);
-        if (s) {
-          const gid = getSessionId();
-          if (gid && gid !== s.user.id) {
-            try {
-              await api("/api/documents/claim", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ session_id: gid }),
-              });
-            } catch {
-              /* ignore */
-            }
+      const {
+        data: { session: s },
+      } = await sb.auth.getSession();
+      if (!mounted) return;
+      setSession(s);
+      if (s) {
+        const gid = getSessionId();
+        if (gid && gid !== s.user.id) {
+          try {
+            await api("/api/documents/claim", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ session_id: gid }),
+            });
+          } catch {
+            /* ignore */
           }
         }
-      }
-
-      if (mounted) {
         await refreshProfile();
-        setLoading(false);
       }
+      setLoading(false);
     })();
 
-    let unsub: (() => void) | null = null;
-    if (sb) {
-      const { data: sub } = sb.auth.onAuthStateChange(
-        (_event: string, s: Session | null) => {
-          if (!mounted) return;
-          setSession(s);
-          void refreshProfile();
-        },
-      );
-      unsub = () => sub.subscription.unsubscribe();
-    }
-
-    // Passkey token changes via localStorage events (other tabs) OR our own
-    // sign-in/out calls. Listen to storage + window focus so the pill stays
-    // accurate without a reload.
-    const onStorage = () => {
-      setPasskeyEmail(getPasskeyEmail());
-      void refreshProfile();
-    };
-    window.addEventListener("storage", onStorage);
-    window.addEventListener("focus", onStorage);
+    const { data: sub } = sb.auth.onAuthStateChange(
+      (_event: string, s: Session | null) => {
+        if (!mounted) return;
+        setSession(s);
+        if (s) void refreshProfile();
+        else setProfile(null);
+      },
+    );
 
     return () => {
       mounted = false;
-      unsub?.();
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("focus", onStorage);
+      sub.subscription.unsubscribe();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const auth: AuthState = (() => {
-    const hasPasskey = !!getPasskeyToken();
-    if (hasPasskey) {
-      return {
+  const auth: AuthState = session
+    ? {
         signedIn: true,
-        provider: "passkey",
-        displayEmail: passkeyEmail ?? profile?.email ?? null,
-      };
-    }
-    if (session) {
-      return {
-        signedIn: true,
-        provider: "supabase",
         displayEmail: profile?.email ?? session.user.email ?? null,
-      };
-    }
-    return { signedIn: false, provider: null, displayEmail: null };
-  })();
+      }
+    : { signedIn: false, displayEmail: null };
 
   return { session, profile, loading, auth, refreshProfile };
 }
@@ -199,7 +157,6 @@ export async function resendVerification(email: string): Promise<void> {
 }
 
 export async function signOut(): Promise<void> {
-  clearPasskey();
   const sb = getSupabase();
   if (sb) await sb.auth.signOut();
 }

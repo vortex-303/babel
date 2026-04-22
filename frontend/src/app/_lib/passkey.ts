@@ -5,73 +5,39 @@ import {
   startRegistration,
 } from "@simplewebauthn/browser";
 
-// Key in localStorage where we stash the babel-minted JWT after a successful
-// passkey ceremony. The api() wrapper prefers this over the Supabase token
-// so passkey users don't need a Supabase session.
-const BABEL_TOKEN_KEY = "babel:passkey-token";
-const BABEL_EMAIL_KEY = "babel:passkey-email";
+import { api } from "./admin";
+import { getSupabase } from "./supabase";
 
-export function getPasskeyToken(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(BABEL_TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-export function getPasskeyEmail(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.localStorage.getItem(BABEL_EMAIL_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function persist(token: string, email: string | null) {
-  try {
-    window.localStorage.setItem(BABEL_TOKEN_KEY, token);
-    if (email) window.localStorage.setItem(BABEL_EMAIL_KEY, email);
-    else window.localStorage.removeItem(BABEL_EMAIL_KEY);
-  } catch {
-    /* ignore */
-  }
-}
-
-export function clearPasskey(): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(BABEL_TOKEN_KEY);
-    window.localStorage.removeItem(BABEL_EMAIL_KEY);
-  } catch {
-    /* ignore */
-  }
-}
-
-export async function registerPasskey(email: string): Promise<{ email: string }> {
-  const beginRes = await fetch("/api/passkey/register/begin", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email }),
-  });
+/**
+ * Register a new passkey on the currently-signed-in Supabase account.
+ * Browser prompts for Face ID / Touch ID / Windows Hello; on success the
+ * credential is stored against `auth.users.id` on the backend.
+ */
+export async function registerPasskey(): Promise<void> {
+  const beginRes = await api("/api/passkey/register/begin", { method: "POST" });
   if (!beginRes.ok) throw new Error(await friendlyError(beginRes));
   const { challenge_id, options } = await beginRes.json();
 
   const credential = await startRegistration(options);
 
-  const completeRes = await fetch("/api/passkey/register/complete", {
+  const completeRes = await api("/api/passkey/register/complete", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ challenge_id, credential, label: email }),
+    body: JSON.stringify({ challenge_id, credential }),
   });
   if (!completeRes.ok) throw new Error(await friendlyError(completeRes));
-  const { access_token, email: serverEmail } = await completeRes.json();
-  persist(access_token, serverEmail ?? email);
-  return { email: serverEmail ?? email };
 }
 
-export async function signInWithPasskey(): Promise<{ email: string | null }> {
+/**
+ * Sign in using a previously registered passkey. After WebAuthn verifies
+ * the assertion, the backend returns a Supabase magic-link token_hash;
+ * we hand that to supabase.auth.verifyOtp to install a real Supabase
+ * session. No email is ever sent.
+ */
+export async function signInWithPasskey(): Promise<{ email: string }> {
+  const sb = getSupabase();
+  if (!sb) throw new Error("Supabase not configured on this deployment.");
+
   const beginRes = await fetch("/api/passkey/login/begin", { method: "POST" });
   if (!beginRes.ok) throw new Error(await friendlyError(beginRes));
   const { challenge_id, options } = await beginRes.json();
@@ -84,9 +50,39 @@ export async function signInWithPasskey(): Promise<{ email: string | null }> {
     body: JSON.stringify({ challenge_id, credential }),
   });
   if (!completeRes.ok) throw new Error(await friendlyError(completeRes));
-  const { access_token, email } = await completeRes.json();
-  persist(access_token, email);
-  return { email: email ?? null };
+  const { email, token_hash } = await completeRes.json();
+
+  const { error } = await sb.auth.verifyOtp({
+    token_hash,
+    type: "magiclink",
+  });
+  if (error) throw error;
+
+  return { email };
+}
+
+export type PasskeyCredentialInfo = {
+  credential_id: string;
+  label: string | null;
+  created_at: string;
+  last_used_at: string | null;
+};
+
+export async function listPasskeys(): Promise<PasskeyCredentialInfo[]> {
+  const r = await api("/api/passkey/credentials");
+  if (!r.ok) throw new Error(await friendlyError(r));
+  const { credentials } = (await r.json()) as {
+    credentials: PasskeyCredentialInfo[];
+  };
+  return credentials;
+}
+
+export async function deletePasskey(credentialId: string): Promise<void> {
+  const r = await api(
+    `/api/passkey/credentials/${encodeURIComponent(credentialId)}`,
+    { method: "DELETE" },
+  );
+  if (!r.ok) throw new Error(await friendlyError(r));
 }
 
 async function friendlyError(r: Response): Promise<string> {

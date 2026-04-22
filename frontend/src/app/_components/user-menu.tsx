@@ -14,7 +14,7 @@ import {
 import { registerPasskey, signInWithPasskey } from "@/app/_lib/passkey";
 import { isAuthConfigured } from "@/app/_lib/supabase";
 
-type Mode = "menu" | "signin" | "signup" | "admin" | "passkey-signup";
+type Mode = "menu" | "signin" | "signup" | "admin";
 
 export function UserMenu() {
   const [open, setOpen] = useState(false);
@@ -100,16 +100,16 @@ export function UserMenu() {
     }
   };
 
-  const submitPasskeyRegister = async () => {
+  const submitAddPasskey = async () => {
     setError(null);
     setMessage(null);
     setBusy(true);
     try {
-      await registerPasskey(email.trim());
+      await registerPasskey();
+      setMessage(
+        "Passkey added. You can sign in with Face ID / Touch ID next time.",
+      );
       await refreshProfile();
-      setOpen(false);
-      setMode("menu");
-      resetAuthForm();
     } catch (e) {
       setError(friendlyAuthError(e));
     } finally {
@@ -232,6 +232,29 @@ export function UserMenu() {
                   </Link>
                 </div>
               )}
+              {signedIn && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void submitAddPasskey()}
+                    disabled={busy}
+                    className="block w-full text-left py-1.5 px-2 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-900 disabled:opacity-50"
+                  >
+                    <span className="mr-2">🔐</span>
+                    {busy ? "Waiting for passkey…" : "Add passkey to this account"}
+                  </button>
+                  {message && (
+                    <p className="text-[11px] text-emerald-700 dark:text-emerald-400 px-2 py-1">
+                      {message}
+                    </p>
+                  )}
+                  {error && (
+                    <p className="text-[11px] text-red-600 dark:text-red-400 px-2 py-1">
+                      {error}
+                    </p>
+                  )}
+                </>
+              )}
               {!signedIn && (
                 <>
                   <button
@@ -241,16 +264,6 @@ export function UserMenu() {
                     className="block w-full text-left py-1.5 px-2 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-900 disabled:opacity-50"
                   >
                     <span className="mr-2">🔑</span>Sign in with passkey
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMode("passkey-signup");
-                      resetAuthForm();
-                    }}
-                    className="block w-full text-left py-1.5 px-2 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-900"
-                  >
-                    <span className="mr-2">🔐</span>Create passkey account
                   </button>
                   {busy && !error && (
                     <p className="text-[11px] text-zinc-500 px-2 py-1">
@@ -410,47 +423,6 @@ export function UserMenu() {
                   resetAuthForm();
                 }}
                 className="w-full py-1 rounded-md text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
-              >
-                Cancel
-              </button>
-            </>
-          )}
-
-          {mode === "passkey-signup" && (
-            <>
-              <p className="text-xs text-zinc-500 mb-2">
-                Enter an email as your account label. Your device will create a
-                passkey — no password, no email sent.
-              </p>
-              <input
-                type="email"
-                value={email}
-                autoComplete="email"
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void submitPasskeyRegister();
-                }}
-                placeholder="you@example.com"
-                className="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-transparent px-2 py-1.5 mb-2 text-sm"
-              />
-              {error && (
-                <p className="text-xs text-red-600 dark:text-red-400 mb-2">{error}</p>
-              )}
-              <button
-                type="button"
-                disabled={busy || !email}
-                onClick={() => void submitPasskeyRegister()}
-                className="w-full py-1.5 rounded-md bg-zinc-900 text-white text-xs font-medium disabled:opacity-50 dark:bg-white dark:text-black"
-              >
-                {busy ? "Waiting for passkey…" : "Create passkey"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMode("menu");
-                  resetAuthForm();
-                }}
-                className="w-full mt-1 py-1 rounded-md text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-900"
               >
                 Cancel
               </button>

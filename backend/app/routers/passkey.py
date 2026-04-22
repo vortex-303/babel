@@ -1,18 +1,16 @@
-"""Passkey / WebAuthn authentication.
+"""Passkey / WebAuthn as a second credential on a Supabase account.
 
-Parallel auth system to Supabase. A passkey user is identified by a babel-
-generated UUID stored in `passkeycredential.user_id` and carried in a
-babel-minted JWT (HS256 with BABEL_JWT_SECRET). The `iss` claim is set to
-`babel` so auth.py can tell our tokens apart from Supabase's.
+Flow:
+    1. User signs up with email + password → Supabase session.
+    2. Signed-in user hits /passkey/register/begin (Supabase JWT required)
+       → credential bound to their Supabase user_id + email.
+    3. Next visit, /passkey/login/begin (public) → browser picks discoverable
+       credential → /passkey/login/complete verifies assertion → backend
+       calls Supabase Admin generate_link to mint a one-time magic-link
+       token → frontend exchanges the token for a real Supabase session.
 
-Ceremony:
-    1. Client POSTs /passkey/register/begin { email } → server returns
-       options (challenge, rp, user, pubKeyCredParams) + a challenge id.
-    2. Client runs navigator.credentials.create(options) → WebAuthn prompt.
-    3. Client POSTs /passkey/register/complete { challenge_id, response }
-       → server verifies attestation, stores credential, mints JWT.
-    4. Login is symmetric: /login/begin → navigator.credentials.get →
-       /login/complete.
+No separate babel user space: passkey and email point at the same auth.users
+row, so tenancy / credits / billing all Just Work.
 """
 
 from __future__ import annotations
@@ -21,10 +19,9 @@ import base64
 import json
 import os
 import secrets
-import uuid
 from datetime import datetime, timedelta
 
-import jwt
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -38,25 +35,21 @@ from webauthn import (
 from webauthn.helpers.cose import COSEAlgorithmIdentifier
 from webauthn.helpers.structs import (
     AuthenticationCredential,
-    PublicKeyCredentialDescriptor,
     RegistrationCredential,
     ResidentKeyRequirement,
     UserVerificationRequirement,
 )
 
+from app.auth import AuthedUser, require_authed_user
 from app.config import settings
 from app.db import get_session
-from app.models import PasskeyChallenge, PasskeyCredential, Profile
+from app.models import PasskeyChallenge, PasskeyCredential
 
 router = APIRouter(prefix="/passkey", tags=["passkey"])
 
 
 # Challenges expire quickly so a stolen in-flight ceremony can't be replayed.
 CHALLENGE_TTL_SECONDS = 300
-
-# JWT lifetime for babel-minted passkey sessions. Short enough to limit
-# exposure if a token leaks, long enough that users don't re-auth constantly.
-JWT_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 days
 
 
 def _rp_id() -> str:
@@ -74,28 +67,6 @@ def _origin() -> list[str]:
     can authorize both apex + preview URLs at the same time."""
     raw = os.environ.get("BABEL_PASSKEY_ORIGIN") or settings.passkey_origin
     return [o.strip() for o in raw.split(",") if o.strip()]
-
-
-def _babel_jwt_secret() -> str:
-    """Separate secret from Supabase's so rotating one doesn't invalidate the
-    other. Falls back to the Supabase secret in dev so local .env stays slim."""
-    return settings.babel_jwt_secret or settings.supabase_jwt_secret
-
-
-def _mint_token(user_id: str, email: str | None) -> str:
-    now = datetime.utcnow()
-    payload = {
-        "sub": user_id,
-        "email": email,
-        "iss": "babel",
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(seconds=JWT_TTL_SECONDS)).timestamp()),
-        "aud": "authenticated",  # match Supabase's audience so auth.py pipeline works
-    }
-    secret = _babel_jwt_secret()
-    if not secret:
-        raise HTTPException(status_code=503, detail="passkey jwt secret not configured")
-    return jwt.encode(payload, secret, algorithm="HS256")
 
 
 def _b64url(data: bytes) -> str:
@@ -119,32 +90,62 @@ def _purge_stale_challenges(session: Session) -> None:
         session.commit()
 
 
-# --- Registration -------------------------------------------------------------
+def _generate_supabase_magic_link(email: str) -> dict:
+    """Call Supabase Admin API to mint a one-time magic-link token for the
+    given email. We return the full response so the frontend can pick out
+    hashed_token + verification_type and call supabase.auth.verifyOtp."""
+    if not settings.supabase_url or not settings.supabase_service_key:
+        raise HTTPException(status_code=503, detail="supabase admin not configured")
+    r = httpx.post(
+        f"{settings.supabase_url}/auth/v1/admin/generate_link",
+        headers={
+            "apikey": settings.supabase_service_key,
+            "Authorization": f"Bearer {settings.supabase_service_key}",
+            "Content-Type": "application/json",
+        },
+        json={"type": "magiclink", "email": email},
+        timeout=10.0,
+    )
+    if r.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"supabase admin link failed ({r.status_code}): {r.text[:200]}",
+        )
+    return r.json()
 
 
-class RegisterBeginBody(BaseModel):
-    email: str  # required — used as the user-visible label on the passkey prompt
+# --- Registration (requires signed-in Supabase user) -------------------------
 
 
 @router.post("/register/begin")
 def register_begin(
-    body: RegisterBeginBody, session: Session = Depends(get_session)
+    user: AuthedUser = Depends(require_authed_user),
+    session: Session = Depends(get_session),
 ) -> dict:
-    """Generate WebAuthn registration options. We mint a brand-new user_id
-    now and commit to it only after verify — cheap enough that aborted
-    ceremonies just leave an orphan user_id in the challenge row."""
+    """Mint registration options for the caller's Supabase account. Credential
+    will be stored against `user.user_id` so future passkey logins resolve
+    back to the same auth.users row."""
     _purge_stale_challenges(session)
 
-    user_id = str(uuid.uuid4())
+    # Exclude already-registered credentials so the browser doesn't let the
+    # user double-enroll the same authenticator on this account.
+    existing = session.exec(
+        select(PasskeyCredential).where(PasskeyCredential.user_id == user.user_id)
+    ).all()
+
     options = generate_registration_options(
         rp_id=_rp_id(),
         rp_name=_rp_name(),
-        user_id=user_id.encode(),
-        user_name=body.email,
-        user_display_name=body.email,
+        user_id=user.user_id.encode(),
+        user_name=user.email or user.user_id,
+        user_display_name=user.email or user.user_id,
         supported_pub_key_algs=[
             COSEAlgorithmIdentifier.ECDSA_SHA_256,
             COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_256,
+        ],
+        exclude_credentials=[
+            {"id": _b64url_decode(c.credential_id), "type": "public-key"}
+            for c in existing
         ],
         authenticator_selection={
             "residentKey": ResidentKeyRequirement.PREFERRED,
@@ -158,8 +159,8 @@ def register_begin(
             id=challenge_id,
             challenge=_b64url(options.challenge),
             kind="register",
-            user_id=user_id,
-            email=body.email,
+            user_id=user.user_id,
+            email=user.email,
         )
     )
     session.commit()
@@ -172,16 +173,22 @@ def register_begin(
 
 class RegisterCompleteBody(BaseModel):
     challenge_id: str
-    credential: dict  # raw response from navigator.credentials.create
+    credential: dict
     label: str | None = None
 
 
 @router.post("/register/complete")
 def register_complete(
-    body: RegisterCompleteBody, session: Session = Depends(get_session)
+    body: RegisterCompleteBody,
+    user: AuthedUser = Depends(require_authed_user),
+    session: Session = Depends(get_session),
 ) -> dict:
     challenge = session.get(PasskeyChallenge, body.challenge_id)
-    if challenge is None or challenge.kind != "register":
+    if (
+        challenge is None
+        or challenge.kind != "register"
+        or challenge.user_id != user.user_id
+    ):
         raise HTTPException(status_code=400, detail="unknown or expired challenge")
     if (datetime.utcnow() - challenge.created_at).total_seconds() > CHALLENGE_TTL_SECONDS:
         session.delete(challenge)
@@ -198,45 +205,69 @@ def register_complete(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"attestation failed: {exc}")
 
-    # Store credential + ensure a Profile exists for the freshly-minted user.
     cred_id = _b64url(verification.credential_id)
-    existing = session.get(PasskeyCredential, cred_id)
-    if existing is not None:
+    if session.get(PasskeyCredential, cred_id) is not None:
         raise HTTPException(status_code=409, detail="credential already registered")
 
     session.add(
         PasskeyCredential(
             credential_id=cred_id,
-            user_id=challenge.user_id,
+            user_id=user.user_id,
             public_key=_b64url(verification.credential_public_key),
             sign_count=verification.sign_count,
-            label=body.label or challenge.email,
+            label=body.label or user.email,
         )
     )
-
-    profile = session.get(Profile, challenge.user_id)
-    if profile is None:
-        profile = Profile(
-            user_id=challenge.user_id,
-            email=challenge.email,
-            credits_balance=settings.signup_bonus_words,
-        )
-        session.add(profile)
-
     session.delete(challenge)
     session.commit()
 
-    token = _mint_token(challenge.user_id, challenge.email)
-    return {"access_token": token, "user_id": challenge.user_id, "email": challenge.email}
+    return {"ok": True, "credential_id": cred_id, "label": body.label or user.email}
 
 
-# --- Login --------------------------------------------------------------------
+@router.get("/credentials")
+def list_credentials(
+    user: AuthedUser = Depends(require_authed_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    rows = session.exec(
+        select(PasskeyCredential)
+        .where(PasskeyCredential.user_id == user.user_id)
+        .order_by(PasskeyCredential.created_at.desc())
+    ).all()
+    return {
+        "credentials": [
+            {
+                "credential_id": c.credential_id,
+                "label": c.label,
+                "created_at": c.created_at.isoformat(),
+                "last_used_at": c.last_used_at.isoformat() if c.last_used_at else None,
+            }
+            for c in rows
+        ]
+    }
+
+
+@router.delete("/credentials/{credential_id}")
+def delete_credential(
+    credential_id: str,
+    user: AuthedUser = Depends(require_authed_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    cred = session.get(PasskeyCredential, credential_id)
+    if cred is None or cred.user_id != user.user_id:
+        raise HTTPException(status_code=404, detail="credential not found")
+    session.delete(cred)
+    session.commit()
+    return {"ok": True}
+
+
+# --- Login (public, returns a Supabase magic-link hashed_token) ---------------
 
 
 @router.post("/login/begin")
 def login_begin(session: Session = Depends(get_session)) -> dict:
-    """Discoverable credential flow — client doesn't need to tell us who they
-    are up front. The authenticator surfaces any passkey scoped to our RP id."""
+    """Discoverable credential flow. Any passkey scoped to our RP id is a
+    candidate; the browser picks one and returns it to /login/complete."""
     _purge_stale_challenges(session)
 
     options = generate_authentication_options(
@@ -302,7 +333,28 @@ def login_complete(
     session.delete(challenge)
     session.commit()
 
+    # We need the user's email to mint the magic link. Read it from the
+    # profile (set at signup) or fall back to the stored credential label,
+    # which we captured at registration.
+    from app.models import Profile
+
     profile = session.get(Profile, stored.user_id)
-    email = profile.email if profile else None
-    token = _mint_token(stored.user_id, email)
-    return {"access_token": token, "user_id": stored.user_id, "email": email}
+    email = (profile.email if profile else None) or stored.label
+    if not email:
+        raise HTTPException(status_code=500, detail="credential has no email on file")
+
+    link = _generate_supabase_magic_link(email)
+    hashed_token = (
+        link.get("properties", {}).get("hashed_token")
+        or link.get("hashed_token")
+    )
+    if not hashed_token:
+        raise HTTPException(
+            status_code=502, detail="supabase did not return a hashed_token"
+        )
+
+    return {
+        "email": email,
+        "token_hash": hashed_token,
+        "verification_type": "magiclink",
+    }
