@@ -8,7 +8,6 @@ import {
   PORTUGUESE_VARIANTS,
   SPANISH_VARIANTS,
 } from "@/app/_lib/languages";
-import { getSessionId } from "@/app/_lib/session";
 
 export type JobRow = {
   id: number;
@@ -356,23 +355,63 @@ function VersionRow({ job, onChange }: { job: JobRow; onChange: () => void }) {
 }
 
 function DownloadLink({ jobId, fmt }: { jobId: number; fmt: string }) {
-  // <a download> is a native browser navigation, so our api() wrapper can't
-  // attach X-Session-ID / X-Admin-Code headers. Pass them as query params
-  // instead — get_owner_id + is_admin both accept the query form.
-  const sessionId = typeof window !== "undefined" ? getSessionId() : null;
-  const adminCode = typeof window !== "undefined" ? getAdminCode() : null;
-  const qs = new URLSearchParams({ format: fmt });
-  if (sessionId) qs.set("session", sessionId);
-  if (adminCode) qs.set("admin", adminCode);
+  // Fetch via api() so the Supabase JWT + session id + admin code all
+  // reach the backend (a native <a download> couldn't carry headers).
+  // Then stream the body into a Blob and trigger the download with a
+  // synthetic anchor — fully client-side, no token in the URL.
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const download = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api(`/api/jobs/${jobId}/download?format=${fmt}`);
+      if (!res.ok) {
+        const detail = await res
+          .json()
+          .then((j) => j.detail ?? res.statusText)
+          .catch(() => res.statusText);
+        throw new Error(typeof detail === "string" ? detail : res.statusText);
+      }
+
+      const filename = extractFilename(res.headers.get("content-disposition")) ??
+        `job-${jobId}.${fmt}`;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "download failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <a
-      href={`/api/jobs/${jobId}/download?${qs.toString()}`}
-      download
-      className="text-xs px-2 py-0.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-    >
-      .{fmt}
-    </a>
+    <>
+      <button
+        type="button"
+        onClick={() => void download()}
+        disabled={busy}
+        className="text-xs px-2 py-0.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+      >
+        {busy ? "…" : `.${fmt}`}
+      </button>
+      {error && <span className="text-xs text-red-600">{error}</span>}
+    </>
   );
+}
+
+function extractFilename(header: string | null): string | null {
+  if (!header) return null;
+  const m = /filename="?([^"]+)"?/.exec(header);
+  return m ? m[1] : null;
 }
 
 function LanguageSelect({
