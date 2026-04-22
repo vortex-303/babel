@@ -86,6 +86,12 @@ export default function LandingPage() {
             >
               Start translating →
             </Link>
+            <Link
+              href="/download"
+              className="bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-white dark:text-black dark:hover:bg-zinc-200 font-semibold text-sm px-6 py-3 rounded-full"
+            >
+              Download for Mac
+            </Link>
             <a
               href="#how"
               className="bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-900 dark:hover:bg-zinc-800 text-zinc-900 dark:text-zinc-100 font-semibold text-sm px-6 py-3 rounded-full"
