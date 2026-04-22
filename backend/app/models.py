@@ -80,6 +80,11 @@ class Profile(SQLModel, table=True):
     email: Optional[str] = None
     credits_balance: int = 0  # remaining words the user can translate
     credits_used: int = 0     # lifetime words translated (for receipts + analytics)
+    # Self-host license — when true, the user's own babel worker can
+    # authenticate against the backend and translate their documents
+    # locally. Per-word credits still apply to cloud fulfillment; self-
+    # hosted jobs are free because the user supplies the GPU.
+    self_host_license: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

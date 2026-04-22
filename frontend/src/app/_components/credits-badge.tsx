@@ -27,6 +27,11 @@ export function CreditsBadge() {
     <div
       className={`inline-flex items-center gap-2 rounded-full border pl-3 pr-1 py-1 text-xs ${tone}`}
     >
+      {profile.self_host_license && (
+        <span title="Self-host license active" className="text-[11px]">
+          🔓
+        </span>
+      )}
       <span className="font-semibold">
         {compact(words)} <span className="font-normal opacity-70">words</span>
       </span>

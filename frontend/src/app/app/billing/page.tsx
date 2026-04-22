@@ -13,6 +13,13 @@ type Pack = {
   label: string;
 };
 
+type License = {
+  price_usd: number;
+  label: string;
+  profile_flag: string;
+  description: string;
+};
+
 type Entry = {
   id: number;
   delta: number;
@@ -25,6 +32,7 @@ type Entry = {
 export default function BillingPage() {
   const { session, profile, loading, refreshProfile } = useAuth();
   const [packs, setPacks] = useState<Record<string, Pack>>({});
+  const [licenses, setLicenses] = useState<Record<string, License>>({});
   const [history, setHistory] = useState<Entry[]>([]);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +40,10 @@ export default function BillingPage() {
   useEffect(() => {
     void fetch("/api/billing/packs")
       .then((r) => r.json())
-      .then((j) => setPacks(j.packs as Record<string, Pack>))
+      .then((j) => {
+        setPacks(j.packs as Record<string, Pack>);
+        setLicenses((j.licenses ?? {}) as Record<string, License>);
+      })
       .catch(() => {});
   }, []);
 
@@ -102,6 +113,62 @@ export default function BillingPage() {
           Lifetime used: {profile?.credits_used.toLocaleString() ?? 0} words
         </p>
       </div>
+
+      {Object.keys(licenses).length > 0 && (
+        <section className="mb-10">
+          <h2 className="text-lg font-semibold mb-3">Self-host</h2>
+          <div className="grid sm:grid-cols-1 gap-3">
+            {Object.entries(licenses).map(([id, lic]) => {
+              const owned = Boolean(
+                profile && (profile as Record<string, unknown>)[lic.profile_flag],
+              );
+              return (
+                <div
+                  key={id}
+                  className={`border rounded-xl p-5 flex items-center justify-between gap-4 ${
+                    owned
+                      ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800"
+                      : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950"
+                  }`}
+                >
+                  <div className="flex-1">
+                    <p className="font-semibold">
+                      {lic.label}
+                      {owned && (
+                        <span className="ml-2 text-xs font-normal text-emerald-700 dark:text-emerald-300">
+                          ✓ active
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
+                      {lic.description}
+                    </p>
+                  </div>
+                  {owned ? (
+                    <Link
+                      href="/download"
+                      className="text-sm font-medium px-4 py-2 rounded-full border border-emerald-600 text-emerald-700 dark:text-emerald-300 whitespace-nowrap"
+                    >
+                      Download app →
+                    </Link>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void buy(id)}
+                      disabled={pending !== null}
+                      className="text-sm font-medium px-4 py-2 rounded-full bg-zinc-900 text-white dark:bg-white dark:text-black whitespace-nowrap disabled:opacity-50"
+                    >
+                      {pending === id
+                        ? "Opening…"
+                        : `Buy · $${lic.price_usd}`}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <h2 className="text-lg font-semibold mb-3">Buy credits</h2>
       {error && (

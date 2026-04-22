@@ -64,12 +64,56 @@ def require_admin(x_admin_code: str | None = Header(default=None)) -> None:
         raise HTTPException(status_code=403, detail="admin access required")
 
 
-def require_worker(authorization: str | None = Header(default=None)) -> None:
-    """Bearer-token auth for /api/worker/* endpoints. Token lives in the
-    BABEL_WORKER_TOKEN env var on the backend and in the worker's config."""
-    if not settings.worker_token:
-        raise HTTPException(status_code=403, detail="worker gate not configured")
-    if not authorization or not authorization.startswith("Bearer "):
+class WorkerIdentity:
+    """What kind of caller reached a /worker/* endpoint.
+
+    `user_id` is None for the shared admin-token path (legacy / admin fleet),
+    and a Supabase UUID for self-hosted user workers. Downstream code uses
+    user_id to scope claim-next + decide whether to charge credits."""
+
+    __slots__ = ("user_id", "email")
+
+    def __init__(self, user_id: str | None, email: str | None) -> None:
+        self.user_id = user_id
+        self.email = email
+
+    @property
+    def is_admin_worker(self) -> bool:
+        return self.user_id is None
+
+
+def require_worker(authorization: str | None = Header(default=None)) -> WorkerIdentity:
+    """Accept either the shared admin worker token OR a Supabase JWT from a
+    user who purchased the self-host license. Admin-token callers are
+    unscoped; user callers are scoped to their own jobs by the router."""
+    if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="missing bearer token")
-    if authorization[len("Bearer ") :] != settings.worker_token:
-        raise HTTPException(status_code=403, detail="invalid worker token")
+    token = authorization.split(" ", 1)[1].strip()
+
+    # Fast path: shared admin token. Empty setting disables this branch.
+    if settings.worker_token and token == settings.worker_token:
+        return WorkerIdentity(user_id=None, email=None)
+
+    # User worker path: decode Supabase JWT and enforce license flag.
+    # Imports are local to avoid a circular dependency (auth.py imports deps).
+    from app.auth import decode_supabase_jwt
+    from app.db import new_session
+    from app.models import Profile
+
+    try:
+        user = decode_supabase_jwt(token)
+    except HTTPException as exc:
+        # Keep the original message so the worker can surface it clearly.
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    with new_session() as s:
+        profile = s.get(Profile, user.user_id)
+        if profile is None or not profile.self_host_license:
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "error": "license_required",
+                    "message": "Self-host license required to run a worker.",
+                },
+            )
+    return WorkerIdentity(user_id=user.user_id, email=user.email)

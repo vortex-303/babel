@@ -38,15 +38,30 @@ PACKS: dict[str, dict] = {
     "pro":      {"words": 600_000, "price_usd": 40, "label": "600,000 words"},
 }
 
+# One-time licenses — distinct SKU from word packs. Buying one stamps a
+# boolean on Profile (e.g. self_host_license) rather than adding words.
+LICENSES: dict[str, dict] = {
+    "self_host": {
+        "price_usd": 9,
+        "label": "Self-host license (lifetime)",
+        "profile_flag": "self_host_license",
+        "description": (
+            "Run the babel Mac/Linux app on your own GPU. Translate unlimited"
+            " documents you own, no per-word charge — you supply the compute."
+        ),
+    },
+}
+
 
 class CheckoutBody(BaseModel):
+    # Accepts either a PACKS id (word top-up) or a LICENSES id (flag purchase).
     pack: str
 
 
 @router.get("/packs")
 def list_packs() -> dict:
     """Public price list for the billing page."""
-    return {"packs": PACKS}
+    return {"packs": PACKS, "licenses": LICENSES}
 
 
 @router.get("/me")
@@ -60,6 +75,7 @@ def me(
         "email": profile.email,
         "credits_balance": profile.credits_balance,
         "credits_used": profile.credits_used,
+        "self_host_license": profile.self_host_license,
     }
 
 
@@ -99,12 +115,27 @@ def create_checkout(
 ) -> dict:
     if not settings.stripe_secret_key:
         raise HTTPException(status_code=503, detail="billing not configured")
+
     pack = PACKS.get(body.pack)
-    if pack is None:
-        raise HTTPException(status_code=400, detail=f"unknown pack {body.pack!r}")
+    license_item = LICENSES.get(body.pack)
+    if pack is None and license_item is None:
+        raise HTTPException(status_code=400, detail=f"unknown sku {body.pack!r}")
+
+    item = pack or license_item
+    kind = "pack" if pack else "license"
 
     # Ensure a profile exists so the webhook can credit it later.
     load_or_create_profile(session, user)
+
+    metadata = {
+        "user_id": user.user_id,
+        "pack": body.pack,
+        "kind": kind,
+    }
+    if pack is not None:
+        metadata["words"] = str(pack["words"])
+    else:
+        metadata["profile_flag"] = license_item["profile_flag"]
 
     stripe.api_key = settings.stripe_secret_key
     checkout = stripe.checkout.Session.create(
@@ -115,17 +146,13 @@ def create_checkout(
             {
                 "price_data": {
                     "currency": "usd",
-                    "product_data": {"name": f"babel — {pack['label']}"},
-                    "unit_amount": pack["price_usd"] * 100,
+                    "product_data": {"name": f"babel — {item['label']}"},
+                    "unit_amount": item["price_usd"] * 100,
                 },
                 "quantity": 1,
             }
         ],
-        metadata={
-            "user_id": user.user_id,
-            "pack": body.pack,
-            "words": str(pack["words"]),
-        },
+        metadata=metadata,
         success_url=settings.stripe_success_url,
         cancel_url=settings.stripe_cancel_url,
     )
@@ -161,11 +188,11 @@ async def webhook(
     checkout_id = data.get("id")
     metadata = data.get("metadata") or {}
     user_id = metadata.get("user_id")
-    words = int(metadata.get("words") or 0)
-    if not user_id or words <= 0:
-        raise HTTPException(status_code=400, detail="bad metadata")
+    kind = metadata.get("kind") or "pack"
+    if not user_id:
+        raise HTTPException(status_code=400, detail="bad metadata: missing user_id")
 
-    # Idempotency — if we already credited this checkout, stop.
+    # Idempotency — if we already processed this checkout, stop.
     existing = session.exec(
         select(CreditLedger).where(CreditLedger.stripe_session_id == checkout_id)
     ).first()
@@ -177,6 +204,31 @@ async def webhook(
         profile = Profile(
             user_id=user_id, email=data.get("customer_email"), credits_balance=0
         )
+
+    if kind == "license":
+        flag = metadata.get("profile_flag")
+        if not flag or not hasattr(profile, flag):
+            raise HTTPException(
+                status_code=400, detail=f"bad license metadata: {flag!r}"
+            )
+        setattr(profile, flag, True)
+        profile.updated_at = datetime.utcnow()
+        session.add(profile)
+        session.add(
+            CreditLedger(
+                user_id=user_id,
+                delta=0,
+                reason=f"stripe_license:{flag}",
+                stripe_session_id=checkout_id,
+            )
+        )
+        session.commit()
+        return {"ok": True, "license": flag}
+
+    # Default: word-pack top-up.
+    words = int(metadata.get("words") or 0)
+    if words <= 0:
+        raise HTTPException(status_code=400, detail="bad metadata: words <= 0")
     profile.credits_balance += words
     profile.updated_at = datetime.utcnow()
     session.add(profile)

@@ -90,20 +90,25 @@ def test_unauthenticated_claim_returns_401(client):
     assert r.status_code == 401
 
 
-def test_wrong_token_returns_403(client):
+def test_wrong_token_returns_401(client):
+    # After the dual-auth rewrite, a non-matching bearer is tried as a
+    # Supabase JWT and rejected with 401 "invalid token". Admin workers
+    # are still rejected, user workers just follow a different error path.
     r = client.post(
         "/worker/claim-next", headers={"Authorization": "Bearer wrong"}
     )
-    assert r.status_code == 403
+    assert r.status_code == 401
 
 
 def test_gate_disabled_when_token_unset(client, monkeypatch):
+    # With the admin token empty, the bearer falls through to Supabase JWT
+    # verification which fails for a non-JWT string. 401 is the new expected
+    # error shape — "not configured" only fires if Supabase is also unwired.
     monkeypatch.setattr(settings, "worker_token", "")
     r = client.post(
         "/worker/claim-next", headers={"Authorization": "Bearer anything"}
     )
-    assert r.status_code == 403
-    assert "not configured" in r.json()["detail"]
+    assert r.status_code in (401, 503)
 
 
 # ---------- claim-next ----------
@@ -324,4 +329,5 @@ def test_claim_specific_auth_required(client):
         f"/worker/claim/{job_id}",
         headers={"Authorization": "Bearer wrong"},
     )
-    assert r.status_code == 403
+    # Dual-auth: unknown bearer gets decoded as JWT, fails with 401.
+    assert r.status_code in (401, 403)

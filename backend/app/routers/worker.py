@@ -9,11 +9,11 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.db import get_session
-from app.deps import require_worker
+from app.deps import WorkerIdentity, require_worker
 from app.models import Chunk, Document, GlossaryTerm, Job, JobStatus, Profile
 from app.services import credits as credits_svc
 
-router = APIRouter(prefix="/worker", tags=["worker"], dependencies=[Depends(require_worker)])
+router = APIRouter(prefix="/worker", tags=["worker"])
 
 
 # In-memory heartbeat tracking. Cheap and good enough for admin visibility.
@@ -59,15 +59,21 @@ class QueueItem(BaseModel):
 
 
 @router.get("/queue", response_model=list[QueueItem])
-def list_queue(session: Session = Depends(get_session)) -> list[QueueItem]:
+def list_queue(
+    session: Session = Depends(get_session),
+    worker: WorkerIdentity = Depends(require_worker),
+) -> list[QueueItem]:
     """Read-only list of jobs a worker could claim. Used by the tray UI in
     manual mode so the operator can pick which to run."""
-    rows = session.exec(
+    stmt = (
         select(Job, Document)
         .join(Document)
         .where(Job.status == JobStatus.QUEUED)
         .order_by(Job.priority.desc(), Job.queued_at.asc())
-    ).all()
+    )
+    if not worker.is_admin_worker:
+        stmt = stmt.where(Document.owner_id == worker.user_id)
+    rows = session.exec(stmt).all()
     return [
         QueueItem(
             job_id=job.id,
@@ -87,10 +93,13 @@ def list_queue(session: Session = Depends(get_session)) -> list[QueueItem]:
 
 @router.post("/claim/{job_id}", response_model=ClaimResponse)
 def claim_specific(
-    job_id: int, session: Session = Depends(get_session)
+    job_id: int,
+    session: Session = Depends(get_session),
+    worker: WorkerIdentity = Depends(require_worker),
 ) -> ClaimResponse:
     """Atomically claim a specific QUEUED job by id. Returns 409 if somebody
-    else already claimed it or it's no longer queued."""
+    else already claimed it or it's no longer queued. User-workers can only
+    claim jobs tied to documents they own."""
     from app.config import settings
 
     stmt = select(Job).where(Job.id == job_id).where(Job.status == JobStatus.QUEUED)
@@ -99,26 +108,34 @@ def claim_specific(
     job = session.exec(stmt).first()
     if job is None:
         raise HTTPException(status_code=409, detail="job not claimable")
+    if not worker.is_admin_worker:
+        doc = session.get(Document, job.document_id)
+        if doc is None or doc.owner_id != worker.user_id:
+            raise HTTPException(status_code=403, detail="job not owned by caller")
     return _claim_and_serialize(job, session, settings.context_chars)
 
 
 @router.post("/claim-next", response_model=ClaimResponse | None)
-def claim_next(session: Session = Depends(get_session)) -> ClaimResponse | None:
+def claim_next(
+    session: Session = Depends(get_session),
+    worker: WorkerIdentity = Depends(require_worker),
+) -> ClaimResponse | None:
     """Atomically claim the next QUEUED job (highest priority, oldest first).
 
-    Flips status to TRANSLATING in the same transaction so two concurrent
-    workers can't race on the same job. Returns null when the queue is
-    empty — the worker polls again after a short delay."""
+    Admin workers claim from the global queue. User workers only see jobs
+    whose source document they own — so self-hosted users translate their
+    own books and nothing else. Empty queue → null; worker re-polls."""
     from app.config import settings
 
-    # Single-statement claim using FOR UPDATE SKIP LOCKED so parallel workers
-    # grab distinct jobs. Falls back to plain select on SQLite.
     stmt = (
         select(Job)
+        .join(Document)
         .where(Job.status == JobStatus.QUEUED)
         .order_by(Job.priority.desc(), Job.queued_at.asc())
         .limit(1)
     )
+    if not worker.is_admin_worker:
+        stmt = stmt.where(Document.owner_id == worker.user_id)
     if session.bind and session.bind.dialect.name == "postgresql":
         stmt = stmt.with_for_update(skip_locked=True)
 
@@ -184,6 +201,7 @@ def upload_chunk(
     idx: int,
     body: ChunkUpdate,
     session: Session = Depends(get_session),
+    worker: WorkerIdentity = Depends(require_worker),
 ) -> dict:
     """Save one translated chunk. Idempotent — re-uploads overwrite. Keeps
     job.translated_chunks in sync with actual non-null chunks rather than
@@ -220,7 +238,11 @@ def upload_chunk(
 
 
 @router.post("/jobs/{job_id}/done")
-def mark_done(job_id: int, session: Session = Depends(get_session)) -> dict:
+def mark_done(
+    job_id: int,
+    session: Session = Depends(get_session),
+    worker: WorkerIdentity = Depends(require_worker),
+) -> dict:
     job = session.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
@@ -230,10 +252,15 @@ def mark_done(job_id: int, session: Session = Depends(get_session)) -> dict:
     session.commit()
     session.refresh(job)
 
-    # Charge the owner. Admin jobs are free. Authed users pay from balance;
-    # guests decrement their in-process trial bucket.
+    # Charge the owner for cloud fulfillment only. Self-hosted jobs (worker
+    # == doc owner) are free because the user already supplied the compute.
     doc = session.get(Document, job.document_id)
-    if doc and doc.owner_id and doc.owner_id != "*":
+    self_hosted = (
+        not worker.is_admin_worker
+        and doc is not None
+        and doc.owner_id == worker.user_id
+    )
+    if not self_hosted and doc and doc.owner_id and doc.owner_id != "*":
         profile = session.get(Profile, doc.owner_id)
         credits_svc.charge_for_job(
             session,
@@ -242,7 +269,7 @@ def mark_done(job_id: int, session: Session = Depends(get_session)) -> dict:
             guest_session_id=None if profile else doc.owner_id,
         )
 
-    return {"ok": True, "status": job.status.value}
+    return {"ok": True, "status": job.status.value, "self_hosted": self_hosted}
 
 
 class FailBody(BaseModel):
@@ -254,6 +281,7 @@ def mark_failed(
     job_id: int,
     body: FailBody,
     session: Session = Depends(get_session),
+    worker: WorkerIdentity = Depends(require_worker),
 ) -> dict:
     job = session.get(Job, job_id)
     if not job:
@@ -275,7 +303,10 @@ class HeartbeatBody(BaseModel):
 
 
 @router.post("/heartbeat")
-def heartbeat(body: HeartbeatBody) -> dict:
+def heartbeat(
+    body: HeartbeatBody,
+    worker: WorkerIdentity = Depends(require_worker),
+) -> dict:
     _HEARTBEATS[body.worker_id] = {
         **body.model_dump(),
         "last_seen": datetime.utcnow().isoformat(),

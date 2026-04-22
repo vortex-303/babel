@@ -11,6 +11,7 @@ export type Profile = {
   email: string | null;
   credits_balance: number;
   credits_used: number;
+  self_host_license?: boolean;
 };
 
 export type AuthState = {
