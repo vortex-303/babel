@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api } from "@/app/_lib/admin";
+import { api, getAdminCode } from "@/app/_lib/admin";
 import {
   LANGUAGES,
   PORTUGUESE_VARIANTS,
   SPANISH_VARIANTS,
 } from "@/app/_lib/languages";
+import { getSessionId } from "@/app/_lib/session";
 
 export type JobRow = {
   id: number;
@@ -42,6 +43,24 @@ export const STATUS_LABEL: Record<string, string> = {
   failed: "failed",
   rejected: "rejected",
 };
+
+// Guests don't need to see the internal state machine — queued vs translating
+// vs reviewing is operator-level detail. Collapse everything mid-flight to
+// "processing". Admin UI keeps the raw labels for operator visibility.
+const GUEST_PROCESSING_STATES = new Set([
+  "analyzing",
+  "awaiting_glossary_review",
+  "queued",
+  "pending_approval",
+  "translating",
+  "reviewing",
+  "assembling",
+]);
+
+export function guestStatusLabel(status: string): string {
+  if (GUEST_PROCESSING_STATES.has(status)) return "processing";
+  return STATUS_LABEL[status] ?? status;
+}
 
 export const TERMINAL = new Set(["done", "failed", "rejected"]);
 
@@ -229,11 +248,18 @@ export function VersionList({
 
 function VersionRow({ job, onChange }: { job: JobRow; onChange: () => void }) {
   const [busy, setBusy] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    setIsAdmin(Boolean(getAdminCode()));
+  }, []);
   const active = !TERMINAL.has(job.status);
   const progress =
     job.chunk_count > 0
       ? Math.round((job.translated_chunks / job.chunk_count) * 100)
       : 0;
+  const statusLabel = isAdmin
+    ? (STATUS_LABEL[job.status] ?? job.status)
+    : guestStatusLabel(job.status);
 
   const cancel = async () => {
     setBusy(true);
@@ -270,7 +296,7 @@ function VersionRow({ job, onChange }: { job: JobRow; onChange: () => void }) {
               : "bg-blue-500/15 text-blue-700 dark:text-blue-300"
         }`}
       >
-        {STATUS_LABEL[job.status] ?? job.status}
+        {statusLabel}
       </span>
       {active && (
         <span className="text-xs text-zinc-500">
@@ -312,9 +338,17 @@ function VersionRow({ job, onChange }: { job: JobRow; onChange: () => void }) {
 }
 
 function DownloadLink({ jobId, fmt }: { jobId: number; fmt: string }) {
+  // <a download> is a native browser navigation, so our api() wrapper can't
+  // attach X-Session-ID / X-Admin-Code headers. Pass them as query params
+  // instead — get_owner_id + is_admin both accept the query form.
+  const sessionId = typeof window !== "undefined" ? getSessionId() : null;
+  const adminCode = typeof window !== "undefined" ? getAdminCode() : null;
+  const qs = new URLSearchParams({ format: fmt });
+  if (sessionId) qs.set("session", sessionId);
+  if (adminCode) qs.set("admin", adminCode);
   return (
     <a
-      href={`/api/jobs/${jobId}/download?format=${fmt}`}
+      href={`/api/jobs/${jobId}/download?${qs.toString()}`}
       download
       className="text-xs px-2 py-0.5 rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
     >

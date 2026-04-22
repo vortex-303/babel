@@ -4,6 +4,7 @@ import { UserMenu } from "../_components/user-menu";
 import { HealthBadge } from "./_components/health-badge";
 import { RecentDocuments } from "./_components/recent-documents";
 import { UploadCard } from "./_components/upload-card";
+import { WorkerBadge } from "./_components/worker-badge";
 
 export default function Home() {
   return (
@@ -20,6 +21,7 @@ export default function Home() {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            <WorkerBadge />
             <HealthBadge />
             <UserMenu />
           </div>

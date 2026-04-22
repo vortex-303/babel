@@ -1,20 +1,26 @@
 from __future__ import annotations
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Query
 
 from app.config import settings
 
 
-def is_admin(x_admin_code: str | None = Header(default=None)) -> bool:
+def is_admin(
+    x_admin_code: str | None = Header(default=None),
+    admin: str | None = Query(default=None),
+) -> bool:
     """Returns True when the caller provided the correct admin pass-code.
 
-    Safe to use on public endpoints that branch behavior based on caller
-    identity (e.g. upload size limits). For endpoints that must only be
-    reachable by admins, prefer `require_admin`."""
+    Accepts the code either as the X-Admin-Code header (normal API calls) or
+    as ?admin= query param (browser downloads via <a href download> can't
+    set headers). Safe to use on public endpoints that branch behavior based
+    on caller identity (e.g. upload size limits). For endpoints that must
+    only be reachable by admins, prefer `require_admin`."""
     code = settings.admin_code
     if not code:
         return False
-    return bool(x_admin_code) and x_admin_code == code
+    provided = x_admin_code or admin
+    return bool(provided) and provided == code
 
 
 # Sentinel owner_id used for admin callers — means "bypass the filter,
@@ -25,20 +31,22 @@ OWNER_ADMIN = "*"
 
 def get_owner_id(
     x_session_id: str | None = Header(default=None),
+    session: str | None = Query(default=None),
     admin: bool = Depends(is_admin),
 ) -> str:
     """Identify the caller for tenancy filtering. Admin gets the sentinel
-    OWNER_ADMIN; everyone else gets their X-Session-ID header (required
-    for any tenancy-scoped endpoint — frontend generates + persists it in
-    localStorage). Raises 400 if a non-admin request has no session id."""
+    OWNER_ADMIN; everyone else gets their session id from the X-Session-ID
+    header OR a ?session= query param (browser downloads via <a href download>
+    can't set headers, so they pass the id in the URL instead)."""
     if admin:
         return OWNER_ADMIN
-    if not x_session_id:
+    owner = x_session_id or session
+    if not owner:
         raise HTTPException(
             status_code=400,
-            detail="missing X-Session-ID header; the frontend should set one",
+            detail="missing session: set X-Session-ID header or ?session= query param",
         )
-    return x_session_id
+    return owner
 
 
 def require_admin(x_admin_code: str | None = Header(default=None)) -> None:

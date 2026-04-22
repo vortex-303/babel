@@ -96,3 +96,22 @@ def health() -> dict:
         "source": settings.source_lang,
         "target": settings.target_lang,
     }
+
+
+@app.get("/status")
+def status() -> dict:
+    """Public worker-availability signal for the UI. No auth — only exposes
+    aggregate counts, never worker ids or IPs. 'Recent' = heartbeat in the
+    last 30s (workers beat every ~5s)."""
+    from app.routers.worker import known_workers
+
+    now = datetime.utcnow().timestamp()
+    recent = 0
+    for h in known_workers():
+        try:
+            seen = datetime.fromisoformat(h["last_seen"]).timestamp()
+        except Exception:
+            continue
+        if now - seen <= 30:
+            recent += 1
+    return {"workers_online": recent}
