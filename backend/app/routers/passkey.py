@@ -199,7 +199,7 @@ def register_complete(
 
     try:
         verification = verify_registration_response(
-            credential=RegistrationCredential.parse_raw(json.dumps(body.credential)),
+            credential=RegistrationCredential.model_validate(body.credential),
             expected_challenge=_b64url_decode(challenge.challenge),
             expected_rp_id=_rp_id(),
             expected_origin=_origin(),
@@ -319,7 +319,7 @@ def login_complete(
 
     try:
         verification = verify_authentication_response(
-            credential=AuthenticationCredential.parse_raw(json.dumps(body.credential)),
+            credential=AuthenticationCredential.model_validate(body.credential),
             expected_challenge=_b64url_decode(challenge.challenge),
             expected_rp_id=_rp_id(),
             expected_origin=_origin(),

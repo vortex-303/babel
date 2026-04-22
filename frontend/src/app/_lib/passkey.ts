@@ -18,7 +18,7 @@ export async function registerPasskey(): Promise<void> {
   if (!beginRes.ok) throw new Error(await friendlyError(beginRes));
   const { challenge_id, options } = await beginRes.json();
 
-  const credential = await startRegistration(options);
+  const credential = await startRegistration({ optionsJSON: options });
 
   const completeRes = await api("/api/passkey/register/complete", {
     method: "POST",
@@ -42,7 +42,7 @@ export async function signInWithPasskey(): Promise<{ email: string }> {
   if (!beginRes.ok) throw new Error(await friendlyError(beginRes));
   const { challenge_id, options } = await beginRes.json();
 
-  const credential = await startAuthentication(options);
+  const credential = await startAuthentication({ optionsJSON: options });
 
   const completeRes = await fetch("/api/passkey/login/complete", {
     method: "POST",
