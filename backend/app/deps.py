@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 
 from app.config import settings
 
@@ -15,6 +15,30 @@ def is_admin(x_admin_code: str | None = Header(default=None)) -> bool:
     if not code:
         return False
     return bool(x_admin_code) and x_admin_code == code
+
+
+# Sentinel owner_id used for admin callers — means "bypass the filter,
+# see everything". Picked so it can't collide with a real client-generated
+# UUID (UUIDs never contain '*').
+OWNER_ADMIN = "*"
+
+
+def get_owner_id(
+    x_session_id: str | None = Header(default=None),
+    admin: bool = Depends(is_admin),
+) -> str:
+    """Identify the caller for tenancy filtering. Admin gets the sentinel
+    OWNER_ADMIN; everyone else gets their X-Session-ID header (required
+    for any tenancy-scoped endpoint — frontend generates + persists it in
+    localStorage). Raises 400 if a non-admin request has no session id."""
+    if admin:
+        return OWNER_ADMIN
+    if not x_session_id:
+        raise HTTPException(
+            status_code=400,
+            detail="missing X-Session-ID header; the frontend should set one",
+        )
+    return x_session_id
 
 
 def require_admin(x_admin_code: str | None = Header(default=None)) -> None:

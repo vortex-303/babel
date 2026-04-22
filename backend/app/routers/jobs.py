@@ -12,7 +12,7 @@ from sqlmodel import Session, func, select
 from app.adapters import IMPLEMENTED_ADAPTERS
 from app.config import settings
 from app.db import get_session
-from app.deps import is_admin
+from app.deps import OWNER_ADMIN, get_owner_id, is_admin
 from app.models import Chunk, Document, GlossaryTerm, Job, JobStatus
 from app.services import queue as job_queue
 from app.services.analyzer import ADAPTER_PROFILES, chunk_document, estimate
@@ -33,9 +33,13 @@ class CreateJobBody(BaseModel):
 
 
 @router.post("")
-def create_job(body: CreateJobBody, session: Session = Depends(get_session)) -> dict:
+def create_job(
+    body: CreateJobBody,
+    session: Session = Depends(get_session),
+    owner: str = Depends(get_owner_id),
+) -> dict:
     doc = session.get(Document, body.document_id)
-    if not doc:
+    if not doc or not _doc_owned_by(doc, owner):
         raise HTTPException(status_code=404, detail="document not found")
 
     adapter = body.model_adapter or settings.model_adapter
@@ -64,31 +68,34 @@ def create_job(body: CreateJobBody, session: Session = Depends(get_session)) -> 
 def list_jobs(
     document_id: int | None = Query(default=None),
     session: Session = Depends(get_session),
+    owner: str = Depends(get_owner_id),
 ) -> list[dict]:
     stmt = select(Job, Document).join(Document).order_by(Job.created_at.desc())
     if document_id is not None:
         stmt = stmt.where(Job.document_id == document_id)
+    if owner != OWNER_ADMIN:
+        stmt = stmt.where(Document.owner_id == owner)
     rows = session.exec(stmt).all()
     return [_serialize_job(job, doc) for job, doc in rows]
 
 
 @router.get("/{job_id}")
-def get_job(job_id: int, session: Session = Depends(get_session)) -> dict:
-    job = session.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
-    doc = session.get(Document, job.document_id)
+def get_job(
+    job_id: int,
+    session: Session = Depends(get_session),
+    owner: str = Depends(get_owner_id),
+) -> dict:
+    job, doc = _require_owned_job(session, job_id, owner)
     return _serialize_job(job, doc)
 
 
 @router.post("/{job_id}/analyze")
-def analyze_job(job_id: int, session: Session = Depends(get_session)) -> dict:
-    job = session.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
-    doc = session.get(Document, job.document_id)
-    if not doc:
-        raise HTTPException(status_code=404, detail="document missing")
+def analyze_job(
+    job_id: int,
+    session: Session = Depends(get_session),
+    owner: str = Depends(get_owner_id),
+) -> dict:
+    job, doc = _require_owned_job(session, job_id, owner)
 
     storage = get_storage()
     if not storage.exists(doc.stored_path):
@@ -139,10 +146,12 @@ def analyze_job(job_id: int, session: Session = Depends(get_session)) -> dict:
 
 
 @router.get("/{job_id}/chunks")
-def list_chunks(job_id: int, session: Session = Depends(get_session)) -> list[dict]:
-    job = session.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
+def list_chunks(
+    job_id: int,
+    session: Session = Depends(get_session),
+    owner: str = Depends(get_owner_id),
+) -> list[dict]:
+    _require_owned_job(session, job_id, owner)
     rows = session.exec(
         select(Chunk).where(Chunk.job_id == job_id).order_by(Chunk.idx)
     ).all()
@@ -162,14 +171,13 @@ def enqueue_translate(
     job_id: int,
     session: Session = Depends(get_session),
     admin: bool = Depends(is_admin),
+    owner: str = Depends(get_owner_id),
 ) -> dict:
     """Enqueue a job for translation. The queue worker picks it up and runs
     one job at a time. In MANUAL mode non-admin submissions land in
     PENDING_APPROVAL until an admin accepts. Admin submissions always go
     straight to QUEUED regardless of mode."""
-    job = session.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
+    job, _doc = _require_owned_job(session, job_id, owner)
     if job.model_adapter not in IMPLEMENTED_ADAPTERS:
         raise HTTPException(
             status_code=400,
@@ -210,10 +218,12 @@ def enqueue_translate(
 
 
 @router.get("/{job_id}/queue-position")
-def queue_position(job_id: int, session: Session = Depends(get_session)) -> dict:
-    job = session.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
+def queue_position(
+    job_id: int,
+    session: Session = Depends(get_session),
+    owner: str = Depends(get_owner_id),
+) -> dict:
+    job, _doc = _require_owned_job(session, job_id, owner)
     return {
         "id": job.id,
         "status": job.status.value,
@@ -256,16 +266,12 @@ def extract_glossary(
     session: Session = Depends(get_session),
     top_n: int = Query(50, ge=1, le=200),
     min_occurrences: int = Query(2, ge=1),
+    owner: str = Depends(get_owner_id),
 ) -> list[dict]:
     """Scan the source document for capitalized multi-word terms, persist them
     as GlossaryTerm rows (replaces any existing rows for this job). Returns
     the extracted list for UI review."""
-    job = session.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
-    doc = session.get(Document, job.document_id)
-    if not doc:
-        raise HTTPException(status_code=404, detail="document missing")
+    job, doc = _require_owned_job(session, job_id, owner)
     storage = get_storage()
     if not storage.exists(doc.stored_path):
         raise HTTPException(status_code=410, detail="uploaded file no longer available")
@@ -295,9 +301,12 @@ def extract_glossary(
 
 
 @router.get("/{job_id}/glossary")
-def get_glossary(job_id: int, session: Session = Depends(get_session)) -> list[dict]:
-    if not session.get(Job, job_id):
-        raise HTTPException(status_code=404, detail="job not found")
+def get_glossary(
+    job_id: int,
+    session: Session = Depends(get_session),
+    owner: str = Depends(get_owner_id),
+) -> list[dict]:
+    _require_owned_job(session, job_id, owner)
     return _list_glossary(job_id, session)
 
 
@@ -306,9 +315,9 @@ def update_glossary(
     job_id: int,
     body: GlossaryUpdate,
     session: Session = Depends(get_session),
+    owner: str = Depends(get_owner_id),
 ) -> list[dict]:
-    if not session.get(Job, job_id):
-        raise HTTPException(status_code=404, detail="job not found")
+    _require_owned_job(session, job_id, owner)
     # Wipe + rewrite. Keeps the endpoint idempotent and avoids juggling ids.
     session.exec(delete(GlossaryTerm).where(GlossaryTerm.job_id == job_id))
     for e in body.entries:
@@ -348,26 +357,30 @@ def _list_glossary(job_id: int, session: Session) -> list[dict]:
 
 
 @router.delete("/{job_id}")
-def delete_job(job_id: int, session: Session = Depends(get_session)) -> dict:
+def delete_job(
+    job_id: int,
+    session: Session = Depends(get_session),
+    owner: str = Depends(get_owner_id),
+) -> dict:
     """Remove a single translation version (the Job) and its chunks +
     glossary. Leaves the source Document intact so other versions keep
     working."""
-    job = session.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
-
+    _require_owned_job(session, job_id, owner)
     session.exec(delete(Chunk).where(Chunk.job_id == job_id))
     session.exec(delete(GlossaryTerm).where(GlossaryTerm.job_id == job_id))
+    job = session.get(Job, job_id)
     session.delete(job)
     session.commit()
     return {"ok": True, "deleted_job_id": job_id}
 
 
 @router.post("/{job_id}/cancel")
-def cancel_job(job_id: int, session: Session = Depends(get_session)) -> dict:
-    job = session.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
+def cancel_job(
+    job_id: int,
+    session: Session = Depends(get_session),
+    owner: str = Depends(get_owner_id),
+) -> dict:
+    job, _doc = _require_owned_job(session, job_id, owner)
     # Cancel works at any "not-yet-terminal" point: queued, pending approval,
     # or already running. Pulls the job out of any worker's claim window.
     cancelable = {
@@ -395,13 +408,9 @@ def download_job(
     job_id: int,
     format: str = Query("md", pattern="^(md|docx|epub)$"),
     session: Session = Depends(get_session),
+    owner: str = Depends(get_owner_id),
 ) -> Response:
-    job = session.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="job not found")
-    doc = session.get(Document, job.document_id)
-    if not doc:
-        raise HTTPException(status_code=404, detail="document missing")
+    job, doc = _require_owned_job(session, job_id, owner)
     if job.status != JobStatus.DONE:
         raise HTTPException(
             status_code=409,
@@ -426,6 +435,28 @@ def download_job(
             "Content-Disposition": f'attachment; filename="{out.filename}"',
         },
     )
+
+
+def _doc_owned_by(doc: Document, owner: str) -> bool:
+    """Admin sees all. Regular owners see only their own. Legacy NULL-owner
+    rows are admin-only."""
+    if owner == OWNER_ADMIN:
+        return True
+    return doc.owner_id is not None and doc.owner_id == owner
+
+
+def _require_owned_job(
+    session: Session, job_id: int, owner: str
+) -> tuple[Job, Document]:
+    """Load a job + its document, 404ing cross-session access so session ids
+    can't be enumerated by probing. Returns (job, doc)."""
+    job = session.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    doc = session.get(Document, job.document_id)
+    if not doc or not _doc_owned_by(doc, owner):
+        raise HTTPException(status_code=404, detail="job not found")
+    return job, doc
 
 
 def _serialize_job(job: Job, doc: Document | None) -> dict:

@@ -9,7 +9,7 @@ from sqlmodel import Session, func, select
 
 from app.config import settings
 from app.db import get_session
-from app.deps import is_admin
+from app.deps import OWNER_ADMIN, get_owner_id, is_admin
 from app.models import Chunk, Document, GlossaryTerm, Job
 from app.services import ingest as ingest_service
 from app.services.analyzer import count_tokens
@@ -31,6 +31,7 @@ async def upload_document(
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
     admin: bool = Depends(is_admin),
+    owner: str = Depends(get_owner_id),
 ) -> dict:
     original = file.filename or "upload"
     suffix = Path(original).suffix.lower()
@@ -47,19 +48,22 @@ async def upload_document(
     storage_key = f"source/{stored_name}"
     data = await file.read()
 
-    # Non-admin total-documents cap. Keeps the free tier bounded; admin
-    # can purge via /admin/purge to make room.
+    # Non-admin total-documents cap, scoped per-owner. Each session gets
+    # their own slot allocation so heavy users can't starve out newcomers.
     if not admin:
         doc_count = session.exec(
-            select(func.count()).select_from(Document)
+            select(func.count())
+            .select_from(Document)
+            .where(Document.owner_id == owner)
         ).one()
         if int(doc_count) >= settings.max_documents_nonadmin:
             raise HTTPException(
                 status_code=429,
                 detail=(
-                    f"upload cap reached: {settings.max_documents_nonadmin} "
-                    f"documents in the system. Contact admin or wait for "
-                    f"the retention window to expire."
+                    f"upload cap reached for this session: "
+                    f"{settings.max_documents_nonadmin} documents. "
+                    f"Delete one to free a slot, or wait for the retention "
+                    f"window to expire."
                 ),
             )
 
@@ -107,6 +111,7 @@ async def upload_document(
         word_count=word_count,
         token_count=token_count,
         stored_path=storage_key,
+        owner_id=owner if owner != OWNER_ADMIN else None,
         detected_lang=detected_lang,
         detected_lang_confidence=detected_conf,
     )
@@ -131,27 +136,41 @@ async def upload_document(
 
 
 @router.get("")
-def list_documents(session: Session = Depends(get_session)) -> list[dict]:
-    docs = session.exec(select(Document).order_by(Document.uploaded_at.desc())).all()
+def list_documents(
+    session: Session = Depends(get_session),
+    owner: str = Depends(get_owner_id),
+) -> list[dict]:
+    stmt = select(Document).order_by(Document.uploaded_at.desc())
+    if owner != OWNER_ADMIN:
+        stmt = stmt.where(Document.owner_id == owner)
+    docs = session.exec(stmt).all()
     return [_serialize(d) for d in docs]
 
 
 @router.get("/{doc_id}")
-def get_document(doc_id: int, session: Session = Depends(get_session)) -> dict:
+def get_document(
+    doc_id: int,
+    session: Session = Depends(get_session),
+    owner: str = Depends(get_owner_id),
+) -> dict:
     doc = session.get(Document, doc_id)
-    if not doc:
+    if not doc or not _owned_by(doc, owner):
+        # Deliberately 404 rather than 403 so cross-session snooping can't
+        # enumerate other people's document ids.
         raise HTTPException(status_code=404, detail="document not found")
     return _serialize(doc)
 
 
 @router.delete("/{doc_id}")
 def delete_document(
-    doc_id: int, session: Session = Depends(get_session)
+    doc_id: int,
+    session: Session = Depends(get_session),
+    owner: str = Depends(get_owner_id),
 ) -> dict:
     """Remove a document, its storage blob, and every job + chunk + glossary
     term associated with it. Cascading delete — use with care."""
     doc = session.get(Document, doc_id)
-    if not doc:
+    if not doc or not _owned_by(doc, owner):
         raise HTTPException(status_code=404, detail="document not found")
 
     # Purge cascading rows first (no DB-level cascade on SQLite).
@@ -185,5 +204,14 @@ def _serialize(d: Document) -> dict:
         "token_count": d.token_count,
         "detected_lang": d.detected_lang,
         "detected_lang_confidence": d.detected_lang_confidence,
+        "owner_id": d.owner_id,
         "uploaded_at": d.uploaded_at.isoformat(),
     }
+
+
+def _owned_by(doc: Document, owner: str) -> bool:
+    """True if the caller is admin or owns this document. Legacy NULL-owner
+    docs are admin-only."""
+    if owner == OWNER_ADMIN:
+        return True
+    return doc.owner_id is not None and doc.owner_id == owner

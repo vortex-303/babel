@@ -30,6 +30,10 @@ class Document(SQLModel, table=True):
     stored_path: str
     detected_lang: Optional[str] = None
     detected_lang_confidence: Optional[float] = None
+    # Phase D0 tenancy: session UUID (from X-Session-ID header) for
+    # anonymous users, admin email/identifier for admin uploads, or NULL
+    # for legacy pre-D0 rows (visible only to admin).
+    owner_id: Optional[str] = Field(default=None, index=True)
     uploaded_at: datetime = Field(default_factory=datetime.utcnow)
 
 

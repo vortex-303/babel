@@ -234,6 +234,7 @@ def _serialize_queue_entry(job: Job, doc: Document | None) -> dict[str, Any]:
         "id": job.id,
         "document_filename": doc.filename if doc else None,
         "document_word_count": doc.word_count if doc else None,
+        "owner_id": doc.owner_id if doc else None,
         "status": job.status.value,
         "source_lang": job.source_lang,
         "target_lang": job.target_lang,

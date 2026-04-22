@@ -27,6 +27,7 @@ type QueueEntry = {
   id: number;
   document_filename: string | null;
   document_word_count: number | null;
+  owner_id: string | null;
   status: string;
   source_lang: string;
   target_lang: string;
@@ -289,6 +290,16 @@ export default function AdminPage() {
                   </span>
                   <span className="text-sm flex-1 truncate">
                     #{entry.id} {entry.document_filename}
+                  </span>
+                  <span
+                    className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-500/10 text-zinc-600 dark:text-zinc-300"
+                    title={entry.owner_id ?? "admin / legacy"}
+                  >
+                    {entry.submitted_by_admin
+                      ? "admin"
+                      : entry.owner_id
+                        ? entry.owner_id.slice(0, 8)
+                        : "—"}
                   </span>
                   <span className="text-xs text-zinc-500">
                     {entry.source_lang} → {entry.target_lang} ·{" "}
