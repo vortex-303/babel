@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import delete
 from sqlmodel import Session, func, select
 
-from app.auth import AuthedUser, require_authed_user
+from app.auth import AuthedUser, get_authed_user, require_authed_user
 from app.config import settings
 from app.db import get_session
 from app.deps import OWNER_ADMIN, get_owner_id, is_admin
@@ -34,6 +34,7 @@ async def upload_document(
     session: Session = Depends(get_session),
     admin: bool = Depends(is_admin),
     owner: str = Depends(get_owner_id),
+    user: AuthedUser | None = Depends(get_authed_user),
 ) -> dict:
     original = file.filename or "upload"
     suffix = Path(original).suffix.lower()
@@ -50,9 +51,10 @@ async def upload_document(
     storage_key = f"source/{stored_name}"
     data = await file.read()
 
-    # Non-admin total-documents cap, scoped per-owner. Each session gets
-    # their own slot allocation so heavy users can't starve out newcomers.
-    if not admin:
+    # Doc-count cap only applies to anonymous guests (no account yet).
+    # Signed-in users are already gated by credit balance, and admins
+    # bypass entirely. Keeps guest abuse bounded without punishing payers.
+    if not admin and user is None:
         doc_count = session.exec(
             select(func.count())
             .select_from(Document)
@@ -62,10 +64,9 @@ async def upload_document(
             raise HTTPException(
                 status_code=429,
                 detail=(
-                    f"upload cap reached for this session: "
-                    f"{settings.max_documents_nonadmin} documents. "
-                    f"Delete one to free a slot, or wait for the retention "
-                    f"window to expire."
+                    f"guest upload cap reached: {settings.max_documents_nonadmin} "
+                    f"documents. Create an account to upload unlimited files "
+                    f"(your credit balance is the real cap)."
                 ),
             )
 
